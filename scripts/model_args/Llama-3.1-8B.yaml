@@ -1,0 +1,17 @@
+model_path: "/home/ruomeng/model/meta-llama/Llama-3.1-8B"
+model_name: "Llama-3.1-8B"
+epochs: 2000
+batch_size: 4
+block_size: 1024
+lr: 1e-4
+betas: [0.9, 0.95]
+dtype: "bfloat16"
+weight_decay: 0.01
+seed: 42
+eval_interval: 100
+grad_clip: 1.0
+peft: True 
+r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+target_modules: ["q_proj", "k_proj"]

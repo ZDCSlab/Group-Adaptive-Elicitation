@@ -1,0 +1,17 @@
+# Data / notebooks / builds
+dataset/
+*.log
+*.tmp
+*.ipynb_checkpoints/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.env
+
+logs/
+wandb/
+results/
+
