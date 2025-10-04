@@ -1,5 +1,7 @@
 # Data / notebooks / builds
-dataset/
+dataset/ces_golden
+dataset/ces
+
 *.log
 *.tmp
 *.ipynb_checkpoints/
