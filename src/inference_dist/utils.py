@@ -32,6 +32,7 @@ def load_jsonl_as_dict_of_dict(path, key=None):
             data[obj[key]] = obj  
     return data
 
+
 @torch.no_grad()
 def batched_infer_with_candidates(
     model, dataset, split, device, batch_size, block_size,
@@ -98,49 +99,83 @@ def batched_infer_with_candidates(
 
 
 # dist_predict.py
-from typing import Any, Dict, List, Iterable, Tuple
+# dist_predict_group.py
+from typing import Any, List, Tuple, Optional
+import torch.distributed as dist
 from accelerate import Accelerator
 
-def dist_predict_batch(
+def dist_predict_batch_grouped(
     accelerator: Accelerator,
-    predict_fn,                      # callable like model.predict_batch
-    items: List[Any],                # the list to shard (e.g., nodes)
-    *,                               
-    shard_arg_name: str = "nodes",   # which kw-arg receives the sharded list
-    # everything below is forwarded as-is
+    subgroup: dist.ProcessGroup,          # group_model or group_iid
+    participate: bool,                    # True if this rank belongs to subgroup
+    predict_fn,                           # callable like model.predict_batch
+    items: List[Any],                     # the global list to process
+    *,
+    shard_arg_name: str,                  # e.g., "nodes"
+    world_broadcast: bool = True,         # broadcast outputs to all ranks after subgroup gather
     **kwargs
 ) -> List[Any]:
     """
-    Shard `items` across processes, call `predict_fn` on each shard,
-    gather outputs back (keeping global order).
-    Returns the concatenated list on ALL ranks (same order as `items`).
+    Shard `items` within the subgroup; only participating ranks run predict_fn.
+    Gather results within subgroup, then broadcast to all ranks so everyone
+    receives the same outputs (useful for main-process logic).
+    Returns outputs ordered like `items` on ALL ranks.
     """
+    # 1) Make sure everyone sees the same `items` object
+    [items] = accelerator.broadcast_object_list([items])  # world group
 
-    # Broadcast items so every rank has the same reference (optional if already same)
-    [items] = accelerator.broadcast_object_list([items])
-
-    # Remember original indices to restore order after gather
+    # 2) Build (index, item) pairs so we can restore order
     indexed = list(enumerate(items))
-    my_indexed = accelerator.split_between_processes(indexed)   # [(i, item), ...]
-    my_items = [it for (i, it) in my_indexed]
 
-    # Build kwargs for this shard
-    shard_kwargs = dict(kwargs)
-    shard_kwargs[shard_arg_name] = my_items
+    # 3) Split across subgroup ranks only
+    if participate:
+        # get subgroup local rank order
+        ranks = list(subgroup.ranks) if hasattr(subgroup, "ranks") else None
+        # Fallback: compute subgroup ranks from world if needed
+        # Simpler: use world split then mask by participate
+        # We'll manually slice:
+        world_size = accelerator.num_processes
+        world_rank = accelerator.process_index
+        # Filter indices owned by subgroup by modulo trick on subgroup size
+        # Better: scatter via all_gather_object of indices; here use a simple chunking:
+        # compute subgroup_size:
+        subgroup_size = dist.get_world_size(group=subgroup)
+        # compute this rank's subgroup_rank
+        subgroup_rank = dist.get_rank(group=subgroup)
+        # Round-robin assign
+        my_indexed = [p for i, p in enumerate(indexed) if (i % subgroup_size) == subgroup_rank]
+        my_items = [it for (_, it) in my_indexed]
+    else:
+        my_indexed = []
+        my_items = []
 
-    # Local inference
+    # 4) Local predict on subgroup participants
     local_out: List[Any] = []
-    if len(my_items) > 0:
-        local_out = predict_fn(**shard_kwargs)   # must return list aligned to my_items
+    if participate and len(my_items) > 0:
+        shard_kwargs = dict(kwargs)
+        shard_kwargs[shard_arg_name] = my_items
+        local_out = predict_fn(**shard_kwargs)  # must align one-to-one with my_items
 
-    # Zip back with indices, then gather
+    # 5) Pair with global indices and gather within subgroup
     local_pairs = list(zip([i for (i, _) in my_indexed], local_out))
-    gathered: List[Tuple[int, Any]] = accelerator.gather_object(local_pairs)
+    gathered_pairs: List[Tuple[int, Any]] = []
+    dist.all_gather_object(gathered_pairs, local_pairs, group=subgroup)  # list concat across subgroup
 
-    # Reassemble globally in the original order
-    gathered.sort(key=lambda z: z[0])
-    outputs = [y for _, y in gathered]
+    # Flatten + restore order
+    flat = [p for lst in gathered_pairs for p in lst]
+    flat.sort(key=lambda z: z[0])
+    outputs = [y for _, y in flat]
 
-    # Make identical on all ranks (optional but nice)
-    [outputs] = accelerator.broadcast_object_list([outputs])
+    # 6) Optionally broadcast outputs from the subgroup leader to the entire world
+    if world_broadcast:
+        # Pick subgroup leader (rank-0 within subgroup). We need its *world* rank to do world-broadcast.
+        leader_world_rank = None
+        # A simple way: let everyone set outputs=None except participants; then use world broadcast from rank-0 (world)
+        # Instead, we can just world-broadcast via Accelerate from current process, but only one should be the source.
+        # Easiest: pack outputs only on world rank 0; others receive it.
+        if accelerator.is_main_process:
+            src_payload = outputs
+        else:
+            src_payload = None
+        [outputs] = accelerator.broadcast_object_list([src_payload])
     return outputs

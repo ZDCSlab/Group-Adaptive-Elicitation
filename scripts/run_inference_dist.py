@@ -10,122 +10,16 @@ import os
 import torch
 from collections import Counter
 
-from inference.dataset import Dataset
-from inference.select_node import select_nodes
-from inference.select_query import select_queries_iid, select_queries_group
-from inference.sampling import sampling
-from inference.impute import impute_mode
-from inference.model import Meta_Model
-from inference.utils import load_jsonl_as_dict_of_dict, options_to_string
-
-NodeId = Hashable
-QueryId = Hashable
-
-def _neighbors_answers(v, y, neighbors):
-    ans: Dict[NodeId, int] = {}
-    for u in neighbors:
-        ans[u] = y[u]
-    return ans
-
-def probs_binary_to_ans_dict(
-    probs,   # [[p0_A, p0_B], [p1_A, p1_B], ...]
-    nodes,      # same length as probs
-    neighbor,
-    labels=["A", "B"],      # optional: e.g., ("A","B")
-) -> Dict[Hashable, Hashable]:
-
-    ans: Dict[Hashable, Hashable] = {}
-    for nid, row in zip(nodes, probs):
-        p = np.asarray(row, dtype=np.float64)
-        s = p.sum()
-        if not np.isfinite(s) or s <= 0:
-            # fallback uniform if bad row
-            p = np.array([0.5, 0.5], dtype=np.float64)
-        else:
-            p = p / s
-        ans[nid] = labels[int(np.argmax(p))]
-
-    neigh_ans_list = dict()
-    for idx, v in enumerate(nodes):
-            neigh_ans = _neighbors_answers(v, ans, neighbor[v])
-            neigh_ans_list[v] = neigh_ans
-    return neigh_ans_list
-
-def evaluate_model(model, iid_model, dataset, Y_heldout, mode):
-    all_acc, all_ppl = {}, {}
-    held_out_predict = dict()
-
-    opt2idx = {"A": 0, "B": 1}
-
-    for qid in dataset.X_heldout:
-        q_text = dataset.codebook[qid]["question"]
-        print(f"\nEvaluation on: {qid}")
-
-        # --- run inference ---
-        if 'group' in mode:
-            probs_batch_iid = iid_model.predict_batch(nodes=dataset.graph.nodes, query=q_text, asked_queries=dataset.asked_queries, 
-                                            neighbors=dataset.graph.neighbor, observed=dataset.observed_dict, estimated=None, mode='iid')
-            
-            estimated = probs_binary_to_ans_dict(probs_batch_iid, dataset.graph.nodes, neighbor=dataset.graph.neighbor, labels=["A", "B"])  
-
-            probs_batch = model.predict_batch(nodes=dataset.graph.nodes, query=q_text, asked_queries=dataset.asked_queries, 
-                                            neighbors=dataset.graph.neighbor, observed=dataset.observed_dict, estimated=estimated, mode=mode)
-        else:
-            probs_batch = model.predict_batch(nodes=dataset.graph.nodes, query=q_text, asked_queries=dataset.asked_queries, 
-                                            neighbors=dataset.graph.neighbor, observed=dataset.observed_dict, estimated=None, mode=mode)
-    
-        probs_batch = np.array(probs_batch)  # [num_nodes, 2]
-        held_out_predict[qid] = probs_batch
-        print(f"[DEBUG] probs_batch.shape = {probs_batch.shape}")
-        print(f"[DEBUG] first 5 probs_batch rows =\n{probs_batch[:5]}")
+from inference_dist.dataset import Dataset
+from inference_dist.select_node import select_nodes
+from inference_dist.select_query import select_queries_iid, select_queries_group
+from inference_dist.sampling import sampling
+from inference_dist.impute import impute_mode
+from inference_dist.model import Meta_Model, PredictorPool
+from inference_dist.utils import load_jsonl_as_dict_of_dict, options_to_string
+from inference_dist.evaluation import evaluate_model
 
 
-        gold_idx = []
-        for nodeid in dataset.graph.nodes:
-            gold_idx.append(opt2idx[str(Y_heldout[nodeid][qid])])
-        gold_idx = np.array(gold_idx)
-      
-        # --- accuracy ---
-        preds = probs_batch.argmax(axis=1)
-        accuracy = (preds == gold_idx).mean()
-
-        # --- perplexity ---
-        chosen_probs = probs_batch[np.arange(len(gold_idx)), gold_idx]
-        nll = -np.log(chosen_probs + 1e-12)
-        perplexity = np.exp(nll.mean())
-
-        all_acc[qid] = accuracy
-        all_ppl[qid] = perplexity
-
-        print(f"Accuracy={accuracy:.4f}, Perplexity={perplexity:.4f}")
-
-    # --- overall averages ---
-    mean_acc = np.mean(list(all_acc.values()))
-    mean_ppl = np.mean(list(all_ppl.values()))
-    print(f"\nOverall: Accuracy={mean_acc:.4f}, Perplexity={mean_ppl:.4f}")
-
-    return all_acc, all_ppl, mean_acc, mean_ppl, held_out_predict
-
-
-def setup_ddp():
-    # 1. 初始化默认进程组
-    dist.init_process_group(backend="nccl")
-
-    # 2. 读取 local_rank 并绑定到对应 GPU
-    local_rank = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(local_rank)
-
-    return local_rank
-
-def cleanup_ddp():
-    dist.destroy_process_group()
-
-def convert(o):
-        if isinstance(o, np.generic):
-            return o.item()   # numpy.float32/int64 -> python float/int
-        raise TypeError
-
-import os, json
 
 def probs_to_an(
     probs,   # [[p0_A, p0_B], [p1_A, p1_B], ...]
@@ -147,6 +41,7 @@ def probs_to_an(
 
     return ans
 
+
 def save_results(results, save_path, reset=False):
     if reset and os.path.exists(save_path):
         os.remove(save_path)
@@ -158,10 +53,10 @@ def save_results(results, save_path, reset=False):
 
     print(f"Appended results to {save_path}")
 
+
 def run_group_adaptive_elicitation(
     dataset: Any,
-    model: Any,
-    iid_model: Any,
+    pool,
     mode: str,
     node_select: str,
     T: int,
@@ -175,8 +70,7 @@ def run_group_adaptive_elicitation(
 ) -> Any:
     """Run T adaptive rounds of node/query selection, observation, and imputation.
     """
-    # Available queries at start
-    # once at the start of the script
+
     if wandb:
         wb.init(
             project="gae-inference-latest",
@@ -196,7 +90,7 @@ def run_group_adaptive_elicitation(
         raise AttributeError("dataset must provide Xpool iterable of query IDs")
     
     # Evaluation on Hold-out Set
-    all_acc, all_ppl, mean_acc, mean_ppl, held_out_predict = evaluate_model(model, iid_model, dataset, dataset.Y_heldout, mode)
+    all_acc, all_ppl, mean_acc, mean_ppl, held_out_predict = evaluate_model(pool, dataset, dataset.Y_heldout, mode)
     results = {
         "iteration": 0,
         "selected_queries": "None",
@@ -205,17 +99,17 @@ def run_group_adaptive_elicitation(
         "mean_acc": mean_acc,
         "mean_ppl": mean_ppl,
     }
+
     save_results(results, save_path)
     print(f"Saved results to {save_path}")
     if wandb:
         wb.log(results, step=0)
-
+ 
     for t in range(T):
         if not Xavail:
             if progress:
                 print(f"[alg6] round={t} stop: Xavail empty")
             break
-
 
         # Select Query
         if 'random' in mode:
@@ -224,7 +118,7 @@ def run_group_adaptive_elicitation(
         elif 'iid_entropy' in mode:
             x_star = select_queries_iid(
                 dataset,
-                model,
+                pool,
                 nodes=dataset.graph.nodes,
                 Xavail=Xavail,
                 observed=dataset.observed_dict,
@@ -235,17 +129,11 @@ def run_group_adaptive_elicitation(
                 ridge_eps=ridge_eps,
                 rng=rng,
                 verbose=False)
-            
-            # gold_query = {"333b": ["332c", "334c", "333d", "355e", "332g"],
-            #                 "355a": ["332c", "334c", "333d", "355e", "331a"],
-            #                 "330b": ["332c", "334c", "333d",  "355e", "333c"]}
-            # x_star = [gold_query[dataset.X_heldout[0]][t]]
-
+ 
         elif 'group_entropy' in mode:
             x_star = select_queries_group(
                 dataset,
-                model,
-                iid_model = iid_model,
+                pool,
                 nodes=dataset.graph.nodes,
                 Xavail=Xavail,
                 Y_init=None,
@@ -259,13 +147,8 @@ def run_group_adaptive_elicitation(
                 verbose=False
             )
 
-            # gold_query = {"333b": ["332d", "332c", "331a", "332f", "334g"],
-            #                 "355a": ["332d", "332c", "331a", "332f", "332a"],
-            #                 "330b": ["332d", "332c", "331a",  "332f", "332a"]}
-            # x_star = [gold_query[dataset.X_heldout[0]][t]]
-
         print("Selected queries:", x_star)
-
+   
         # 2) Node selection (Alg 4)
         if k_nodes == len(dataset.graph.nodes):
             V_sel = dataset.graph.nodes
@@ -279,8 +162,7 @@ def run_group_adaptive_elicitation(
             x_star = [rng.choice(Xavail)]
             V_sel, Y_init = select_nodes(
                 dataset,
-                model,
-                iid_model,
+                pool,
                 Xavail=x_star,
                 k_nodes=k_nodes,
                 observed=dataset.observed_dict,                 # no per-query observations yet in this round
@@ -302,9 +184,6 @@ def run_group_adaptive_elicitation(
         node_rest = list(set(dataset.graph.nodes) - set(V_sel))
         LABELS = ("A", "B")
         if len(node_rest) > 0:
-            # probs_batch_node_rest = iid_model.predict_batch(nodes=node_rest, query=query_star, asked_queries=dataset.asked_queries, 
-            #                                 neighbors=dataset.graph.neighbor, observed=dataset.observed_dict, estimated=None, mode='iid')
-            # V_rest = probs_to_an(probs_batch_node_rest, node_rest, labels=["A", "B"]) 
             V_rest, V_estimated_lst = {}, []
             for v in node_rest:
                 v_nei = dataset.graph.neighbor[v]
@@ -313,8 +192,7 @@ def run_group_adaptive_elicitation(
 
                 if not nei_ans:
                     # no neighbor has an answer -> random A/B
-                    # print("no neighbor has an answer -> random A/B")
-                    # V_rest[v] = rng.choice(LABELS)
+                    V_rest[v] = rng.choice(LABELS)
                     V_estimated_lst.append(v)
                     continue
 
@@ -328,27 +206,25 @@ def run_group_adaptive_elicitation(
 
             dataset.update_observed_estimated(query_star, V_rest=V_rest)
 
-            if len(V_estimated_lst) > 0:
-                probs_batch_node_rest = iid_model.predict_batch(nodes=V_estimated_lst, query=query_star, asked_queries=dataset.asked_queries, 
-                                                neighbors=dataset.graph.neighbor, observed=dataset.observed_dict, estimated=None, mode='iid')
-                V_estimated = probs_to_an(probs_batch_node_rest, V_estimated_lst, labels=["A", "B"]) 
-                dataset.update_observed_estimated(query_star, V_rest=V_estimated)
+            # if len(V_estimated_lst) > 0:
+            #     probs_batch_node_rest = iid_model.predict_batch(nodes=V_estimated_lst, query=query_star, asked_queries=dataset.asked_queries, 
+            #                                     neighbors=dataset.graph.neighbor, observed=dataset.observed_dict, estimated=None, mode='iid')
+            #     V_estimated = probs_to_an(probs_batch_node_rest, V_estimated_lst, labels=["A", "B"]) 
+            #     dataset.update_observed_estimated(query_star, V_rest=V_estimated)
     
-                assert len(V_rest) + len(V_estimated) + len(V_sel) == len(dataset.graph.nodes)
-            else:
-                assert len(V_rest) + len(V_sel) == len(dataset.graph.nodes)
+            #     assert len(V_rest) + len(V_estimated) + len(V_sel) == len(dataset.graph.nodes)
+            # else:
+            assert len(V_rest) + len(V_sel) == len(dataset.graph.nodes)
             # print(f"random_count: {random_count} / {len(V_rest)}")
 
         dataset.asked_queries.append((query_star, dataset.codebook[query_star]["question"]))
-        
-
         Xavail = [q for q in Xavail if q not in x_star]
 
         if progress:
             print(f"Round={t} done: asked={query_star}, remaining={len(Xavail)}")
 
         # Evaluation on Hold-out Set
-        all_acc, all_ppl, mean_acc, mean_ppl, held_out_predict = evaluate_model(model, iid_model, dataset, dataset.Y_heldout, mode)
+        all_acc, all_ppl, mean_acc, mean_ppl, held_out_predict = evaluate_model(pool, dataset, dataset.Y_heldout, mode)
 
         results = {
         "iteration": t+1,
@@ -384,10 +260,11 @@ def parse_args():
     return p.parse_args()
 
 
+
 if __name__ == "__main__":
 
-    args = parse_args()
 
+    args = parse_args()
     year = args.year
     selected_respodent = args.selected_respondent  # keep your variable name if other code expects it
     mode = args.mode
@@ -414,15 +291,17 @@ if __name__ == "__main__":
     dataset = Dataset.load_dataset(df_survey=df_survey, df_heldout=df_heldout, neighbors_info=neighbors_info, codebook=codebook, verbose=True)
 
     if 'group' in mode:
-        model = Meta_Model(base_model='/home/ruomeng/model/meta-llama/Llama-3.2-1B', checkpoint=checkpoint, device_id=[2,3,4,5])
-        iid_model = Meta_Model(base_model='/home/ruomeng/model/meta-llama/Llama-3.2-1B', checkpoint=checkpoint_iid, device_id=[6,7])
-
+        pool = PredictorPool(
+            group_cfg={"base_model": '/home/ruomeng/model/meta-llama/Llama-3.2-1B', "checkpoint": checkpoint},
+            iid_cfg={"base_model": '/home/ruomeng/model/meta-llama/Llama-3.2-1B', "checkpoint": checkpoint_iid},
+            group_gpus=4, iid_gpus=4)
     else:
-        model = Meta_Model(base_model='/home/ruomeng/model/meta-llama/Llama-3.2-1B', checkpoint=checkpoint_iid, device_id=[0,1,2,3,4,5,6,7])
-        iid_model = model
-        
+        pool = PredictorPool(
+            group_cfg={"base_model": '/home/ruomeng/model/meta-llama/Llama-3.2-1B', "checkpoint": checkpoint_iid},
+            iid_cfg={"base_model": '/home/ruomeng/model/meta-llama/Llama-3.2-1B', "checkpoint": checkpoint_iid},
+            group_gpus=4, iid_gpus=4)
 
-    rng = np.random.default_rng(seed=2)   # create new Generator]
+    rng = np.random.default_rng(seed=42)   # create new Generator]
     T = 5
     N = 3
     ridge_eps = 1e-8
@@ -431,8 +310,10 @@ if __name__ == "__main__":
 
     dataset.X_heldout = [x_heldout]
     print('dataset.X_heldout',  dataset.X_heldout)
+    # dataset.Xpool = dataset.Xpool[:5]
 
-    run_group_adaptive_elicitation(dataset, model, iid_model=iid_model, mode=mode, node_select=node_select, T=T, k_nodes=int(len(dataset.graph.nodes) * selected_respodent), 
-                                N_samples=N, ridge_eps=ridge_eps, rng=rng, progress=True, save_path=save_path, wandb=args.wandb)
+    run_group_adaptive_elicitation(dataset, pool=pool, mode=mode, node_select=node_select, T=T, 
+                                   k_nodes=int(len(dataset.graph.nodes) * selected_respodent), 
+                                   N_samples=N, ridge_eps=ridge_eps, rng=rng, progress=True, save_path=save_path, wandb=args.wandb)
 
 

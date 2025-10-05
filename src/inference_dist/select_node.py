@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Dict, Hashable, Union, List, Mapping, Optional, Callable, Sequence
 import numpy as np
 from numpy.linalg import LinAlgError
-from inference.sampling import sampling
+from inference_dist.sampling import sampling
 from multiprocessing import Pool
 from tqdm import tqdm
 import random
@@ -512,8 +512,7 @@ def validate_sigma(Sigma, sym_tol=1e-8, pd_tol=1e-12, max_tries=6):
 
 def select_nodes(
     dataset,
-    model,
-    iid_model,
+    pool,
     Xavail: List[QueryId],
     k_nodes: int,
     observed: Dict,
@@ -538,7 +537,7 @@ def select_nodes(
  
     for idx, x in enumerate(tqdm(Xavail, desc=f"[Select Node] Sampling")):
         # print(f'{idx}/{len(Xavail)} - ', 'Sampling on ', x)
-        samples, y_init = sampling(dataset, x, observed, model, iid_model, N=N, rng=rng, mode="gibbs", verbose=verbose)
+        samples, y_init = sampling(dataset, x, observed, pool, N=N, rng=rng, mode="gibbs", verbose=verbose)
        
         Z = _formulate_matrix(samples, nodes, map_label={'A': 1, 'B': -1})
         Sigma, mu = _covariance(Z)
