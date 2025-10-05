@@ -16,4 +16,5 @@ __pycache__/
 logs/
 wandb/
 results/
+results_new/
 

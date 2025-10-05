@@ -85,7 +85,6 @@ class Meta_Model:
 
 
         # model
-        
         model = AutoModelForCausalLM.from_pretrained(checkpoint, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2")
 
         # 2) Tokenizer + padding setup
@@ -153,7 +152,7 @@ class Meta_Model:
         # ---- send prompts to LLM ----
         # Here you’d call your underlying LM to get logits / probs
         # Example: returns list of probability distributions
-        probs_batch = self.score_candidates(prompts, options=["A", "B"], per_gpu_batch_size=32)
+        probs_batch = self.score_candidates(prompts, options=["A", "B"], per_gpu_batch_size=512)
 
         return probs_batch
     
@@ -189,7 +188,7 @@ class Meta_Model:
         """
         # --- 1) Tokenize candidate options once ---
         option_token_ids = [self.tokenizer.encode(opt, add_special_tokens=False, 
-                                                  truncation=True, max_length=1024) for opt in options]
+                                                  truncation=True, max_length=2048) for opt in options]
         for tok in option_token_ids:
             if len(tok) != 1:
                 raise ValueError(f"Option '{tok}' is not a single token (multi-token not yet supported).")
@@ -207,33 +206,40 @@ class Meta_Model:
         for start in range(0, len(prompts), batch_size):
             batch_prompts = prompts[start:start + batch_size]
 
-            inputs = self.tokenizer(batch_prompts, return_tensors="pt", padding=True, truncation=False, max_length=1024,
+            inputs = self.tokenizer(batch_prompts, return_tensors="pt", padding=True, truncation=True, max_length=2048,
                                     add_special_tokens=False).to(next(self.model.parameters()).device)
 
             with torch.no_grad():
                 out = self.model(**inputs)             # 并行 forward
             logits = out.logits                      # [B, T, V]
-            attn = inputs["attention_mask"]
-            last_idx = attn.sum(dim=1) - 1
-            rows = torch.arange(logits.size(0))
-            step0_logits = logits[rows, last_idx, :]  # 每行“下一个 token”的分布
+            attn = inputs["attention_mask"].to(dtype=torch.long)
+            lengths = attn.sum(dim=1)   
+            last_idx = (lengths - 1).clamp(min=0, max=logits.size(1)-1)
+            rows = torch.arange(logits.size(0), device=logits.device)
 
+            # Cast to float32 BEFORE log_softmax for stability (avoid bf16 NaNs)
+            step0_logits = logits[rows, last_idx, :].float()      # [B, V]
+            # Optional: early sanity check
+            if torch.isnan(step0_logits).any() or torch.isinf(step0_logits).any():
+                print("[WARN] step0_logits has NaN/Inf; likely overlong prompt or precision issue.", flush=True)
 
             # Ensure option_token_ids is a proper LongTensor on the same device
             if not isinstance(option_token_ids, torch.Tensor):
                 option_token_ids = torch.tensor(option_token_ids, dtype=torch.long)
             option_token_ids = option_token_ids.to(step0_logits.device)
 
-            # Stable log-softmax
-            log_probs = torch.log_softmax(step0_logits, dim=-1)  # [B, V]
-
-            # Safer column select (device-safe)
+            log_probs = torch.log_softmax(step0_logits, dim=-1)   # [B, V] (stable)
             sel_logp = torch.index_select(log_probs, dim=1, index=option_token_ids)  # [B, C]
+            probs = torch.softmax(sel_logp, dim=1)                # [B, C], float32
+            probs = torch.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0)
+            row_sums = probs.sum(dim=1, keepdim=True)
+            needs_fallback = row_sums <= 1e-12
+            if needs_fallback.any():
+                # uniform fallback for degenerate rows (e.g., all -inf)
+                probs[needs_fallback] = 1.0 / probs.size(1)
 
-            # Normalize to get probs over your options
-            probs = sel_logp.exp()
-            probs = probs / probs.sum(dim=-1, keepdim=True)
-            probs_batch.append(probs.float().cpu().numpy())
+            probs = probs / probs.sum(dim=1, keepdim=True)
+            probs_batch.append(probs.cpu().numpy())
 
 
         # --- 6) Concatenate results ---

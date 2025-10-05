@@ -276,7 +276,6 @@ def run_group_adaptive_elicitation(
             V_sel = [nodes_list[int(i)] for i in idx]             # gather by index
             Y_init = None
         else:
-            x_star = [rng.choice(Xavail)]
             V_sel, Y_init = select_nodes(
                 dataset,
                 model,

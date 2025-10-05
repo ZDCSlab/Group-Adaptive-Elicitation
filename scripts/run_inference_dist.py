@@ -159,7 +159,6 @@ def run_group_adaptive_elicitation(
             V_sel = [nodes_list[int(i)] for i in idx]             # gather by index
             Y_init = None
         else:
-            x_star = [rng.choice(Xavail)]
             V_sel, Y_init = select_nodes(
                 dataset,
                 pool,
@@ -247,6 +246,23 @@ def run_group_adaptive_elicitation(
 # -----------------------------
 import argparse
 import wandb as wb
+# seeds_basic.py
+import os, random
+
+def set_all_seeds(seed: int = 42) -> None:
+    """
+    Minimal seeding for reproducible *randomness* (not forcing deterministic kernels).
+    Safe to call at program start and inside Ray actors.
+    """
+    # Python hash & stdlib RNG
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -257,6 +273,7 @@ def parse_args():
     p.add_argument("--x-heldout", default="355a", choices=['333b', '355a', '330b', '334e', '331b', '331d', '334d', '327a', '330a', '334a'])
     p.add_argument("--checkpoint", default="")
     p.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging.")
+    p.add_argument("--seed", default=42, type=int)   # note spelling
     return p.parse_args()
 
 
@@ -271,6 +288,7 @@ if __name__ == "__main__":
     x_heldout = args.x_heldout
     checkpoint = args.checkpoint
     node_select = args.node_select
+    seed= args.seed
 
     checkpoint = "/home/ruomeng/gae/logs/ces_golden_demo/24/neighbor_1/Llama-3.2-1B/20250923_070237"
     checkpoint_iid = "/home/ruomeng/gae/logs/ces_golden_demo/24/neighbor_0/Llama-3.2-1B/20250923_084121"
@@ -301,7 +319,8 @@ if __name__ == "__main__":
             iid_cfg={"base_model": '/home/ruomeng/model/meta-llama/Llama-3.2-1B', "checkpoint": checkpoint_iid},
             group_gpus=4, iid_gpus=4)
 
-    rng = np.random.default_rng(seed=42)   # create new Generator]
+    set_all_seeds(seed=seed)
+    rng = np.random.default_rng(seed=seed)   # create new Generator
     T = 5
     N = 3
     ridge_eps = 1e-8
