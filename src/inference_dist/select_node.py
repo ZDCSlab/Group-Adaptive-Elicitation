@@ -312,42 +312,21 @@ def batch_var_given_A(S, A, C, L):
 import numpy as np
 from scipy.linalg import cholesky as chol, solve_triangular
 
-# --- helpers expected to exist in your codebase ---
-# symmetrize(M) -> (M + M.T)/2
-# chol_extend(L, M, A, v, jitter=0.0) -> extend Cholesky of M[np.ix_(A,A)] by adding v
-# batch_var_given_A(S, A, C, L) -> Var(v | A) for v in C using Cholesky L of S_AA
-
-def _batch_var_given_complement_precision(Omega, A, C, R, clip_var=1e-15):
-    """
-    Compute Var(v | V \\ {v} \\ A) = 1 / (Omega_vv - Omega_vA * Omega_AA^{-1} * Omega_Av)
-    for all v in C, using Cholesky R of Omega_AA (lower-triangular).
-    """
+def _batch_var_given_complement_precision(Omega, A, C, R, clip_var=1e-12):
     C = np.asarray(C, dtype=int)
-    m = len(A)
-    if m == 0:
-        # When A is empty, complement is V\{v} → Var = 1 / Omega_vv
-        denom = Omega[C, C].copy()
-        denom = np.maximum(denom, clip_var)
+    if len(A) == 0:
+        denom = np.maximum(np.diag(Omega)[C], clip_var)
         return 1.0 / denom
 
     A = np.asarray(A, dtype=int)
-    # Pre-extract once
-    Omega_AA = None  # not needed directly (we use solves via R)
-    R = np.asarray(R)
-    out = np.empty(C.size, dtype=float)
-
-    for i, v in enumerate(C):
-        Omega_vA = Omega[v, A]            # shape (m,)
-        Omega_Av = Omega[A, v]            # shape (m,)
-        # Solve Omega_AA x = Omega_Av  via two triangular solves using R (lower)
-        y = solve_triangular(R, Omega_Av, lower=True, check_finite=False)
-        x = solve_triangular(R.T, y, lower=False, check_finite=False)
-        q = float(Omega_vA @ x)           # scalar
-        denom = float(Omega[v, v] - q)
-        if denom <= clip_var:
-            denom = clip_var
-        out[i] = 1.0 / denom
-    return out
+    Ovv = np.diag(Omega)[C]                     # [|C|]
+    OAv = Omega[np.ix_(A, C)]                   # [|A|, |C|]
+    # R is chol(Ω_AA) lower ⇒ R R^T = Ω_AA
+    y = solve_triangular(R, OAv, lower=True, check_finite=False)
+    x = solve_triangular(R.T, y, lower=False, check_finite=False)  # Ω_AA^{-1} Ω_Av
+    denom = Ovv - np.einsum('ac,ac->c', OAv, x)
+    denom = np.maximum(denom, clip_var)
+    return 1.0 / denom
 
 
 # ---------- multi-Sigma greedy selection (paper-accurate) ----------
@@ -358,6 +337,7 @@ def greedy_select_node_mig_multi_exact(
     ridge=1e-6,
     weights=None,             # optional weights per Sigma, default uniform
     clip_var=1e-15,           # guard for logs / inversion
+    MIG=False, 
     verbose=False
 ):
     """
@@ -383,21 +363,22 @@ def greedy_select_node_mig_multi_exact(
     Omega_list, R_list = [], []         # for second term Var(v | complement of A)
 
     for Sigma in Sigma_list:
-        # Stabilize Σ and build its Cholesky on A
+        # Stabilize S and Ω
         S = symmetrize(Sigma) + ridge * np.eye(n)
         S_list.append(S)
+
         L = chol(S[np.ix_(A, A)], lower=True, check_finite=False) if len(A) > 0 else np.zeros((0, 0))
         L_list.append(L)
 
-        # Build Ω and its Cholesky on A
+        # Build Ω with symmetry fix; allow rescue ridge
         try:
             Omega = np.linalg.inv(S)
         except np.linalg.LinAlgError:
-            # small extra ridge if needed
             S_safe = S + 1e-9 * np.eye(n)
             Omega = np.linalg.inv(S_safe)
-
+        Omega = symmetrize(Omega)   # important after inv!
         Omega_list.append(Omega)
+
         R = chol(Omega[np.ix_(A, A)], lower=True, check_finite=False) if len(A) > 0 else np.zeros((0, 0))
         R_list.append(R)
 
@@ -408,15 +389,18 @@ def greedy_select_node_mig_multi_exact(
             break
 
         agg_mig = np.zeros(C.size, dtype=float)
-
-        # aggregate MIG across all Σ_s
         for s, (S, L, Omega, R, ws) in enumerate(zip(S_list, L_list, Omega_list, R_list, w)):
-            # First term: Var(v | A) from Σ
-            var_C = batch_var_given_A(S, A, C.tolist(), L)
-            var_C = np.maximum(var_C, clip_var)
+            var_C   = batch_var_given_A(S, A, C.tolist(), L)
+            var_C   = np.maximum(var_C, clip_var)
+            var_comp= _batch_var_given_complement_precision(Omega, A, C, R, clip_var=clip_var)
 
-            # Second term: Var(v | V\{v}\A) from Ω
-            var_comp = _batch_var_given_complement_precision(Omega, A, C, R, clip_var=clip_var)
+            # per-Σ sanity (optional but good)
+            if not (np.all(np.isfinite(var_C)) and np.all(var_C > 0) and
+                    np.all(np.isfinite(var_comp)) and np.all(var_comp > 0)):
+                raise RuntimeError("Non-finite or non-positive conditional variance detected.")
+            viol = (var_comp - var_C) > 1e-8
+            if np.any(viol) and verbose:
+                print("[WARN][Σ idx {}] Var(v|Z) > Var(v|A) for candidates: {}".format(s, C[viol][:10]))
 
             agg_mig += ws * (np.log(var_C) - np.log(var_comp))
 
@@ -429,19 +413,18 @@ def greedy_select_node_mig_multi_exact(
 
         # Extend both Choleskies for every Σ_s
         for i in range(S_count):
-            # Σ_AA Cholesky (for first term)
             try:
                 L_list[i] = chol_extend(L_list[i], S_list[i], A, v_star, jitter=0.0)
             except np.linalg.LinAlgError:
                 L_list[i] = chol_extend(L_list[i], S_list[i], A, v_star, jitter=1e-9)
-
-            # Ω_AA Cholesky (for second term)
             try:
                 R_list[i] = chol_extend(R_list[i], Omega_list[i], A, v_star, jitter=0.0)
             except np.linalg.LinAlgError:
                 R_list[i] = chol_extend(R_list[i], Omega_list[i], A, v_star, jitter=1e-12)
 
         # Update sets
+        if MIG and mig_best < 1e-12:
+            break
         A.append(v_star)
         chosen.add(v_star)
         C = C[C != v_star]
@@ -519,6 +502,7 @@ def select_nodes(
     N: int = 100,
     ridge_eps: float = 1e-5,
     rng: Optional[np.random.Generator] = None,
+    MIG: bool = False, 
     verbose: bool = False
 ) -> List:
     """Greedy node selection (Alg 4) using Gaussian log-det gains over one-hot blocks.
@@ -551,7 +535,7 @@ def select_nodes(
 
     # Greedy selection
     sigmas_list = [Sigmas[x] for x in Xavail]   # convert dict -> ordered list
-    A, migs, evals = greedy_select_node_mig_multi_exact(sigmas_list, k_nodes, ridge=ridge_eps, verbose=True)
+    A, migs, evals = greedy_select_node_mig_multi_exact(sigmas_list, k_nodes, ridge=ridge_eps, MIG=MIG, verbose=True)
     V_sel = [nodes[int(i)] for i in A]
 
     return V_sel, Y_init

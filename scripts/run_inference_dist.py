@@ -67,14 +67,15 @@ def run_group_adaptive_elicitation(
     progress: bool = False,
     save_path: str = './results/temp', 
     wandb: bool = False,
+    MIG: bool = False,
 ) -> Any:
     """Run T adaptive rounds of node/query selection, observation, and imputation.
     """
 
     if wandb:
         wb.init(
-            project="gae-inference-latest",
-            name=f"{year}_{mode}_node_select_{node_select}_percent{selected_respodent}_T{T}_{x_heldout}",
+            project="gae-inference-1005",
+            name=f"{year}_{mode}_node_select_{node_select}_percent{selected_respodent}_MIG_{MIG}_T{T}_{x_heldout}",
             config={
                 "year": args.year,
                 "mode": args.mode,
@@ -98,6 +99,7 @@ def run_group_adaptive_elicitation(
         # "all_ppl": all_ppl,
         "mean_acc": mean_acc,
         "mean_ppl": mean_ppl,
+        "asked_respodent": 0,
     }
 
     save_results(results, save_path)
@@ -148,9 +150,9 @@ def run_group_adaptive_elicitation(
             )
 
         print("Selected queries:", x_star)
-   
+ 
         # 2) Node selection (Alg 4)
-        if k_nodes == len(dataset.graph.nodes):
+        if not MIG and k_nodes == len(dataset.graph.nodes):
             V_sel = dataset.graph.nodes
         elif node_select == 'random':
             n = len(dataset.graph.nodes)
@@ -168,6 +170,7 @@ def run_group_adaptive_elicitation(
                 N=N_samples,
                 ridge_eps=ridge_eps,
                 rng=rng,
+                MIG=MIG, 
                 verbose=False
             )
 
@@ -232,6 +235,7 @@ def run_group_adaptive_elicitation(
         # "all_ppl": all_ppl,
         "mean_acc": mean_acc,
         "mean_ppl": mean_ppl,
+        "asked_respodent": len(V_sel),
         }
         save_results(results, save_path)
         print(f"Saved results to {save_path}")
@@ -273,6 +277,7 @@ def parse_args():
     p.add_argument("--x-heldout", default="355a", choices=['333b', '355a', '330b', '334e', '331b', '331d', '334d', '327a', '330a', '334a'])
     p.add_argument("--checkpoint", default="")
     p.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging.")
+    p.add_argument("--MIG", action="store_true", help="Enable MIG > 0.")
     p.add_argument("--seed", default=42, type=int)   # note spelling
     return p.parse_args()
 
@@ -325,7 +330,11 @@ if __name__ == "__main__":
     N = 3
     ridge_eps = 1e-8
 
-    save_path = f'./results_new/results_{mode}/{year}_{mode}_node_select_{node_select}_percent{selected_respodent}_T{T}_{x_heldout}.jsonl'
+    if args.MIG:
+        save_path = f'./results_new/results_{mode}/{year}_{mode}_node_select_{node_select}_MIG_T{T}_{x_heldout}.jsonl'
+
+    else:
+        save_path = f'./results_new/results_{mode}/{year}_{mode}_node_select_{node_select}_percent{selected_respodent}_T{T}_{x_heldout}.jsonl'
 
     dataset.X_heldout = [x_heldout]
     print('dataset.X_heldout',  dataset.X_heldout)
@@ -333,6 +342,6 @@ if __name__ == "__main__":
 
     run_group_adaptive_elicitation(dataset, pool=pool, mode=mode, node_select=node_select, T=T, 
                                    k_nodes=int(len(dataset.graph.nodes) * selected_respodent), 
-                                   N_samples=N, ridge_eps=ridge_eps, rng=rng, progress=True, save_path=save_path, wandb=args.wandb)
+                                   N_samples=N, ridge_eps=ridge_eps, rng=rng, progress=True, save_path=save_path, wandb=args.wandb, MIG=args.MIG)
 
 

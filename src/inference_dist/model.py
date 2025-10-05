@@ -156,7 +156,7 @@ class Meta_Model:
 
         return probs_batch
     
-    def score_candidates_dummay(self, prompts, options=["A", "B"], per_gpu_batch_size=8):
+    def score_candidates_dummy(self, prompts, options=["A", "B"], per_gpu_batch_size=8):
         """
         Simulate scoring candidate answers for each prompt.
         Returns: list of probability vectors (softmaxed).
