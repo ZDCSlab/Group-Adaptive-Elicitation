@@ -16,9 +16,8 @@ from inference_dist.select_query import select_queries_iid, select_queries_group
 from inference_dist.sampling import sampling
 from inference_dist.impute import impute_mode
 from inference_dist.model import Meta_Model, PredictorPool
-from inference_dist.utils import load_jsonl_as_dict_of_dict, options_to_string
+from inference_dist.utils import probs_binary_to_ans_dict, load_jsonl_as_dict_of_dict, ans_to_nei_dict
 from inference_dist.evaluation import evaluate_model
-
 
 
 def probs_to_an(
@@ -68,14 +67,15 @@ def run_group_adaptive_elicitation(
     save_path: str = './results/temp', 
     wandb: bool = False,
     MIG: bool = False,
+    imputation: str = 'majority',
 ) -> Any:
     """Run T adaptive rounds of node/query selection, observation, and imputation.
     """
 
     if wandb:
         wb.init(
-            project="gae-inference-1005",
-            name=f"{year}_{mode}_node_select_{node_select}_percent{selected_respodent}_MIG_{MIG}_T{T}_{x_heldout}",
+            project="gae-inference-1006",
+            name=f"{year}_{mode}_node_select_{node_select}_percent{selected_respodent}_MIG_{MIG}_T{T}_{x_heldout}_{imputation}",
             config={
                 "year": args.year,
                 "mode": args.mode,
@@ -95,11 +95,12 @@ def run_group_adaptive_elicitation(
     results = {
         "iteration": 0,
         "selected_queries": "None",
-        # "all_acc": all_acc,
-        # "all_ppl": all_ppl,
+        "all_acc": all_acc,
+        "all_ppl": all_ppl,
         "mean_acc": mean_acc,
         "mean_ppl": mean_ppl,
         "asked_respodent": 0,
+        "migs_count": 0,
     }
 
     save_results(results, save_path)
@@ -148,20 +149,22 @@ def run_group_adaptive_elicitation(
                 rng=rng,
                 verbose=False
             )
+           
 
         print("Selected queries:", x_star)
  
         # 2) Node selection (Alg 4)
         if not MIG and k_nodes == len(dataset.graph.nodes):
             V_sel = dataset.graph.nodes
+            migs_count = 0
         elif node_select == 'random':
             n = len(dataset.graph.nodes)
             nodes_list = list(dataset.graph.nodes)
             idx = rng.choice(n, size=k_nodes, replace=False)
             V_sel = [nodes_list[int(i)] for i in idx]             # gather by index
-            Y_init = None
+            migs_count = 0
         else:
-            V_sel, Y_init = select_nodes(
+            V_sel, migs_count = select_nodes(
                 dataset,
                 pool,
                 Xavail=x_star,
@@ -186,26 +189,44 @@ def run_group_adaptive_elicitation(
         node_rest = list(set(dataset.graph.nodes) - set(V_sel))
         LABELS = ("A", "B")
         if len(node_rest) > 0:
-            V_rest, V_estimated_lst = {}, []
-            for v in node_rest:
-                v_nei = dataset.graph.neighbor[v]
-                # answers from neighbors that have an entry in cur_observed_dict
-                nei_ans = [cur_observed_dict[u] for u in v_nei if u in cur_observed_dict]
 
-                if not nei_ans:
-                    # no neighbor has an answer -> random A/B
-                    V_rest[v] = rng.choice(LABELS)
-                    V_estimated_lst.append(v)
-                    continue
 
-                # majority vote among neighbors' answers
-                counts = Counter(nei_ans)
-                max_cnt = max(counts.values())
-                winners = [ans for ans, cnt in counts.items() if cnt == max_cnt]
+            # Majority
+            if imputation == 'majority':
+                V_rest, V_estimated_lst = {}, []
+                for v in node_rest:
+                    v_nei = dataset.graph.neighbor[v]
+                    # answers from neighbors that have an entry in cur_observed_dict
+                    nei_ans = [cur_observed_dict[u] for u in v_nei if u in cur_observed_dict]
 
-                # tie-break randomly among winners
-                V_rest[v] = rng.choice(winners)
+                    if not nei_ans:
+                        # no neighbor has an answer -> random A/B
+                        V_rest[v] = rng.choice(LABELS)
+                        V_estimated_lst.append(v)
+                        continue
 
+                    # majority vote among neighbors' answers
+                    counts = Counter(nei_ans)
+                    max_cnt = max(counts.values())
+                    winners = [ans for ans, cnt in counts.items() if cnt == max_cnt]
+
+                    # tie-break randomly among winners
+                    V_rest[v] = rng.choice(winners)
+
+            # Predict
+            elif imputation == 'prediction':
+                probs_batch_rest = pool.predict("group", items=node_rest, shard_arg="nodes", query=query_star, asked_queries=dataset.asked_queries,
+                                            neighbors=dataset.graph.neighbor, observed=dataset.observed_dict, estimated=None, mode="group")
+                V_rest = probs_to_an(probs_batch_rest, node_rest, labels=["A", "B"]) 
+                ans_dict = cur_observed_dict | V_rest
+                estimated = ans_to_nei_dict(ans_dict, dataset.graph.nodes, dataset.graph.neighbor)
+                probs_batch_node_rest = pool.predict("group", items=node_rest, shard_arg="nodes", query=query_star, asked_queries=dataset.asked_queries,
+                                            neighbors=dataset.graph.neighbor, observed=dataset.observed_dict, estimated=estimated, mode=mode)
+                V_rest = probs_to_an(probs_batch_node_rest, node_rest, labels=["A", "B"]) 
+                
+            # print("=======================")
+            # print('V_rest', V_rest)
+            # print("=======================")
             dataset.update_observed_estimated(query_star, V_rest=V_rest)
 
             # if len(V_estimated_lst) > 0:
@@ -231,16 +252,18 @@ def run_group_adaptive_elicitation(
         results = {
         "iteration": t+1,
         "selected_queries": x_star[0],
-        # "all_acc": all_acc,
-        # "all_ppl": all_ppl,
+        "all_acc": all_acc,
+        "all_ppl": all_ppl,
         "mean_acc": mean_acc,
         "mean_ppl": mean_ppl,
         "asked_respodent": len(V_sel),
+        "migs_count": migs_count,
         }
         save_results(results, save_path)
         print(f"Saved results to {save_path}")
         if wandb:
             wb.log(results, step=t+1)
+  
     if wandb:
         wb.finish()
 
@@ -274,10 +297,11 @@ def parse_args():
     p.add_argument("--selected-respondent", default=1.0, type=float)   # note spelling
     p.add_argument("--mode", default="iid_random", choices=["group_random","group_entropy","iid_random","iid_entropy"])
     p.add_argument("--node_select", default="random", choices=["random", "entropy"])
-    p.add_argument("--x-heldout", default="355a", choices=['333b', '355a', '330b', '334e', '331b', '331d', '334d', '327a', '330a', '334a'])
+    p.add_argument("--x-heldout", default="355a")
     p.add_argument("--checkpoint", default="")
     p.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging.")
     p.add_argument("--MIG", action="store_true", help="Enable MIG > 0.")
+    p.add_argument("--imputation", default="majority", choices=["majority","prediction"])
     p.add_argument("--seed", default=42, type=int)   # note spelling
     return p.parse_args()
 
@@ -290,7 +314,7 @@ if __name__ == "__main__":
     year = args.year
     selected_respodent = args.selected_respondent  # keep your variable name if other code expects it
     mode = args.mode
-    x_heldout = args.x_heldout
+    x_heldout = args.x_heldout.split('-')
     checkpoint = args.checkpoint
     node_select = args.node_select
     seed= args.seed
@@ -331,17 +355,17 @@ if __name__ == "__main__":
     ridge_eps = 1e-8
 
     if args.MIG:
-        save_path = f'./results_new/results_{mode}/{year}_{mode}_node_select_{node_select}_MIG_T{T}_{x_heldout}.jsonl'
+        save_path = f'./results_new/results_{mode}/{year}_{mode}_node_select_{node_select}_MIG_T{T}_{x_heldout}_{args.imputation}.jsonl'
 
     else:
-        save_path = f'./results_new/results_{mode}/{year}_{mode}_node_select_{node_select}_percent{selected_respodent}_T{T}_{x_heldout}.jsonl'
+        save_path = f'./results_new/results_{mode}/{year}_{mode}_node_select_{node_select}_percent{selected_respodent}_T{T}_{x_heldout}_{args.imputation}.jsonl'
 
-    dataset.X_heldout = [x_heldout]
+    dataset.X_heldout = x_heldout
     print('dataset.X_heldout',  dataset.X_heldout)
-    # dataset.Xpool = dataset.Xpool[:5]
 
     run_group_adaptive_elicitation(dataset, pool=pool, mode=mode, node_select=node_select, T=T, 
                                    k_nodes=int(len(dataset.graph.nodes) * selected_respodent), 
-                                   N_samples=N, ridge_eps=ridge_eps, rng=rng, progress=True, save_path=save_path, wandb=args.wandb, MIG=args.MIG)
+                                   N_samples=N, ridge_eps=ridge_eps, rng=rng, progress=True, save_path=save_path, wandb=args.wandb, 
+                                   MIG=args.MIG, imputation=args.imputation)
 
 

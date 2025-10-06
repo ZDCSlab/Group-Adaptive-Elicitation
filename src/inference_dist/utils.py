@@ -1,6 +1,8 @@
 from collections import Counter
 import torch
 import json
+from typing import Any, Callable, Dict, Hashable, List, Mapping, Optional, Tuple
+import numpy as np
 
 def options_to_string(options: dict, prefix="Options: ", sep=", "):
     """
@@ -179,3 +181,51 @@ def dist_predict_batch_grouped(
             src_payload = None
         [outputs] = accelerator.broadcast_object_list([src_payload])
     return outputs
+
+NodeId = Hashable
+QueryId = Hashable
+
+def _neighbors_answers(v, y, neighbors):
+    ans: Dict[NodeId, int] = {}
+    for u in neighbors:
+        ans[u] = y[u]
+    return ans
+
+
+def probs_binary_to_ans_dict(
+    probs,   # [[p0_A, p0_B], [p1_A, p1_B], ...]
+    nodes,      # same length as probs
+    neighbor,
+    labels=["A", "B"],      # optional: e.g., ("A","B")
+) -> Dict[Hashable, Hashable]:
+
+    ans: Dict[Hashable, Hashable] = {}
+    for nid, row in zip(nodes, probs):
+        p = np.asarray(row, dtype=np.float64)
+        s = p.sum()
+        if not np.isfinite(s) or s <= 0:
+            # fallback uniform if bad row
+            p = np.array([0.5, 0.5], dtype=np.float64)
+        else:
+            p = p / s
+        ans[nid] = labels[int(np.argmax(p))]
+
+    neigh_ans_list = dict()
+    for idx, v in enumerate(nodes):
+            neigh_ans = _neighbors_answers(v, ans, neighbor[v])
+            neigh_ans_list[v] = neigh_ans
+    return neigh_ans_list
+
+
+def ans_to_nei_dict(
+    ans,  
+    nodes,      # same length as probs
+    neighbor,
+    labels=["A", "B"],      # optional: e.g., ("A","B")
+) -> Dict[Hashable, Hashable]:
+
+    neigh_ans_list = dict()
+    for idx, v in enumerate(nodes):
+            neigh_ans = _neighbors_answers(v, ans, neighbor[v])
+            neigh_ans_list[v] = neigh_ans
+    return neigh_ans_list

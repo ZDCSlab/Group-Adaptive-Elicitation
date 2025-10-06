@@ -89,7 +89,9 @@ class Meta_Model:
 
         # 2) Tokenizer + padding setup
         model.resize_token_embeddings(len(self.tokenizer))
+        model.config.vocab_size = len(self.tokenizer)
         model.config.pad_token_id = self.tokenizer.pad_token_id
+
         model.eval()
 
         self.model = model.to(torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu"))
@@ -135,7 +137,7 @@ class Meta_Model:
                 maj_nei_ans, _ = Counter(nei_ans).most_common(1)[0]
                 # print('maj_nei_ans', maj_nei_ans)
                 if 'iid' in mode:
-                    content = f"<Question>{q_text}<<Answer>{ans}"
+                    content = f"<Question>{q_text}<Answer>{ans}"
                 elif 'group' in mode:
                     content = f"<Question>{q_text}<Neighbor>Majority Answer: {maj_nei_ans}<Answer>{ans}"
                 # print(content)
@@ -147,7 +149,8 @@ class Meta_Model:
                 prompt = self._format_prompt(query, options, estimated[caseid], h_text)
             prompts.append(prompt)
 
-        # print(mode, 'Prompt Example:', prompts[0])
+        # if mode == 'group_entropy':
+        #     print('Prompt Example:', prompts[0])
         # print('prompt type', len(set(prompts)))
         # ---- send prompts to LLM ----
         # Here you’d call your underlying LM to get logits / probs
@@ -187,8 +190,7 @@ class Meta_Model:
                 Per-prompt probability distribution over options.
         """
         # --- 1) Tokenize candidate options once ---
-        option_token_ids = [self.tokenizer.encode(opt, add_special_tokens=False, 
-                                                  truncation=True, max_length=2048) for opt in options]
+        option_token_ids = [self.tokenizer.encode(opt, add_special_tokens=False) for opt in options]
         for tok in option_token_ids:
             if len(tok) != 1:
                 raise ValueError(f"Option '{tok}' is not a single token (multi-token not yet supported).")
@@ -206,7 +208,7 @@ class Meta_Model:
         for start in range(0, len(prompts), batch_size):
             batch_prompts = prompts[start:start + batch_size]
 
-            inputs = self.tokenizer(batch_prompts, return_tensors="pt", padding=True, truncation=True, max_length=2048,
+            inputs = self.tokenizer(batch_prompts, return_tensors="pt", padding=True,
                                     add_special_tokens=False).to(next(self.model.parameters()).device)
 
             with torch.no_grad():

@@ -235,7 +235,7 @@ def batch_var_given_A(S, A, C, L):
 #     A_init=None,
 #     ridge=1e-6,
 #     weights=None,             # 可选，对每个 Sigma 的权重，默认均等
-#     clip_var=1e-15,           # 防止 log(<=0)
+#     clip_var=1e-12,           # 防止 log(<=0)
 #     verbose=False
 # ):
 #     """
@@ -336,7 +336,7 @@ def greedy_select_node_mig_multi_exact(
     A_init=None,
     ridge=1e-6,
     weights=None,             # optional weights per Sigma, default uniform
-    clip_var=1e-15,           # guard for logs / inversion
+    clip_var=1e-12,           # guard for logs / inversion
     MIG=False, 
     verbose=False
 ):
@@ -537,5 +537,6 @@ def select_nodes(
     sigmas_list = [Sigmas[x] for x in Xavail]   # convert dict -> ordered list
     A, migs, evals = greedy_select_node_mig_multi_exact(sigmas_list, k_nodes, ridge=ridge_eps, MIG=MIG, verbose=True)
     V_sel = [nodes[int(i)] for i in A]
+    migs_count = sum(1 for x in migs if x > 1e-12)
 
-    return V_sel, Y_init
+    return V_sel, migs_count

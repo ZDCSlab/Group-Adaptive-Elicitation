@@ -213,7 +213,7 @@ def select_queries_group(dataset, model, iid_model, nodes, Xavail, Y_init, obser
             for nodeid in nodes:
                 observed_temp_B[query][nodeid] = 'B'
             probs_batch_iid = iid_model.predict_batch(nodes=dataset.graph.nodes, query=q_text, asked_queries=dataset.asked_queries, 
-                                          neighbors=dataset.graph.neighbor, observed=observed_temp_B, estimated=None, mode=mode)
+                                          neighbors=dataset.graph.neighbor, observed=observed_temp_B, estimated=None, mode='iid')
             estimated = probs_binary_to_ans_dict(probs_batch_iid, dataset.graph.nodes, neighbor=dataset.graph.neighbor, labels=["A", "B"])  
             probs_batch_B = model.predict_batch(nodes=nodes, query=q_text, asked_queries=dataset.asked_queries, 
                                           neighbors=dataset.graph.neighbor, observed=observed_temp_B, estimated=estimated, mode=mode)
