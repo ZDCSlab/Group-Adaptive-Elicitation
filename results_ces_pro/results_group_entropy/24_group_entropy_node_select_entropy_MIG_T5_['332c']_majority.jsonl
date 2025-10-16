@@ -1,0 +1,3 @@
+{"iteration": 0, "selected_queries": "None", "all_acc": {"332c": 0.49798387096774194}, "all_ppl": {"332c": "2.4528253"}, "mean_acc": 0.49798387096774194, "mean_ppl": "2.4528253", "asked_respodent": 0, "migs_count": 0}
+{"iteration": 1, "selected_queries": "332a", "all_acc": {"332c": 0.7661290322580645}, "all_ppl": {"332c": "1.7714746"}, "mean_acc": 0.7661290322580645, "mean_ppl": "1.7714746", "asked_respodent": 214, "migs_count": 214}
+{"iteration": 2, "selected_queries": "332b", "all_acc": {"332c": 0.7651209677419355}, "all_ppl": {"332c": "1.7317162"}, "mean_acc": 0.7651209677419355, "mean_ppl": "1.7317162", "asked_respodent": 222, "migs_count": 222}

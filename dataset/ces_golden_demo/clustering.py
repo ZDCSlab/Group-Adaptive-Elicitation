@@ -312,7 +312,7 @@ def split_by_community(df, id_col="id", community_col="community",
     val_df   = df[df[community_col].isin(val_comms)]
     test_df  = df[df[community_col].isin(test_comms)]
 
-    return {"train": train_df, "val": val_df, "test": test_df}
+    return {"train": train_df, "val": val_df, "test": test_df}, {"train": train_comms, "val": val_comms, "test": test_comms}
 
 
 def split_communities(stats, train_ratio=0.7, val_ratio=0.15, seed=42):
@@ -469,7 +469,6 @@ if __name__ == "__main__":
             max_size=100,
             neighbor_k=20,
         )
-        
 
         print('len(stats)', len(stats))
         sizes = [v["size"] for v in stats.values()]
@@ -480,7 +479,7 @@ if __name__ == "__main__":
         #     # v 是一个字典，可以进一步访问
         #     print("size =", v["size"])
 
-        splits = split_by_community(communities, id_col="id", community_col="community",
+        splits, splits_comm = split_by_community(communities, id_col="id", community_col="community",
                             train_ratio=0.7, val_ratio=0.15, seed=42)
 
         print("Train respondents:\n", splits["train"])
@@ -498,6 +497,12 @@ if __name__ == "__main__":
                 survey_data_filtered_seen["caseid"].isin(splits[f"{split}"]["caseid"])]
             survey_data_filtered_seen.to_csv(f"/home/ruomeng/gae/dataset/ces_golden_demo/raw/{year}/questions_{split}_{year}.csv", index=False)
 
+            save_lst = []
+            for c in splits_comm[split]:
+                save_lst.append([c, stats[c]["size"], stats[c]["avg_internal_sim"], stats[c]["min_internal_sim"]])
+            
+            com_data = pd.DataFrame(save_lst, columns=["community", "size", "avg_internal_sim", "min_internal_sim"])
+            com_data.to_csv(f"/home/ruomeng/gae/dataset/ces_golden_demo/raw/{year}/community_{split}.csv", index=False)
 
     
         id_col = "caseid"

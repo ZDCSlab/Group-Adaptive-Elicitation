@@ -205,7 +205,7 @@ def estimate_loss_and_acc_with_candidates(
         mapping = torch.full((V,), -100, dtype=torch.long, device=device)
         mapping[cand_ids_tensor] = torch.arange(K, device=device)
 
-    for k in range(eval_iters):
+    for k in trange(eval_iters, desc=f"Eval on {split}", unit="iter"):
         X, Y, gradient_mask, nmask = dataset.get_batch(split, batch_size, block_size)
         X, Y, m, nmask = X.to(device), Y.to(device), gradient_mask.to(device).float(), nmask.to(device)
 

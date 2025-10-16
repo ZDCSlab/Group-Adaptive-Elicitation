@@ -231,13 +231,14 @@ def select_queries_group(dataset, pool, nodes, Xavail, Y_init, observed, probs_b
     q_star = max(EIG, key=EIG.get)
     eig_max = EIG[q_star]   # 最大 EIG 值
     print('q_star', q_star, 'eig_max', eig_max)
+    print('EIG', EIG)
     
     return [q_star]
 
 
 
 
-def select_queries_iid(dataset, model, nodes, Xavail, observed, probs_batch_dict, mode='', k=1, 
+def select_queries_iid(dataset, pool, nodes, Xavail, observed, probs_batch_dict, mode='', k=1, 
                 N: int = 100, ridge_eps: float = 1e-5, rng: Optional[np.random.Generator] = None, verbose: bool = False):
     
     query_cand_list = list(Xavail)
@@ -263,8 +264,8 @@ def select_queries_iid(dataset, model, nodes, Xavail, observed, probs_batch_dict
 
         for query in tqdm(query_cand_list, desc="Evaluating queries"):
             q_text_cand = dataset.codebook[query]["question"]
-            probs_batch_w = model.predict_batch(nodes=nodes, query=q_text_cand, asked_queries=dataset.asked_queries, 
-                                          neighbors=dataset.graph.neighbor, observed=observed, estimated=None, mode=mode)
+            probs_batch_w = pool.predict("iid", items=dataset.graph.nodes, shard_arg="nodes", query=q_text_cand, asked_queries=dataset.asked_queries,
+                                        neighbors=dataset.graph.neighbor, observed=observed, estimated=None, mode="iid")
             probs_batch_w = np.array(probs_batch_w)  # [num_nodes, 2]
             pA = np.clip(probs_batch_w[:, 0], 1e-12, 1.0)      # align column 0 with 'A'
             pB = np.clip(probs_batch_w[:, 1], 1e-12, 1.0)
@@ -272,16 +273,16 @@ def select_queries_iid(dataset, model, nodes, Xavail, observed, probs_batch_dict
             observed_temp_A = copy.deepcopy(observed)
             for nodeid in nodes:
                 observed_temp_A[query][nodeid] = 'A'
-            probs_batch_A = model.predict_batch(nodes=nodes, query=q_text, asked_queries=dataset.asked_queries, 
-                                          neighbors=dataset.graph.neighbor, observed=observed_temp_A, estimated=None, mode=mode)
+            probs_batch_A = pool.predict("iid", items=dataset.graph.nodes, shard_arg="nodes", query=q_text, asked_queries=dataset.asked_queries,
+                                        neighbors=dataset.graph.neighbor, observed=observed_temp_A, estimated=None, mode="iid")
             probs_batch_A = np.array(probs_batch_A, dtype=np.float64)  # [N, C]
             entropy_with_designs_A = entropy_np(probs_batch_A)      # [N]
             
             observed_temp_B = copy.deepcopy(observed)
             for nodeid in nodes:
                 observed_temp_B[query][nodeid] = 'B'
-            probs_batch_B = model.predict_batch(nodes=nodes, query=q_text, asked_queries=dataset.asked_queries, 
-                                          neighbors=dataset.graph.neighbor, observed=observed_temp_B, estimated=None, mode=mode)
+            probs_batch_B = pool.predict("iid", items=dataset.graph.nodes, shard_arg="nodes", query=q_text, asked_queries=dataset.asked_queries,
+                                        neighbors=dataset.graph.neighbor, observed=observed_temp_B, estimated=None, mode="iid")
             probs_batch_B = np.array(probs_batch_B, dtype=np.float64)  # [N, C]
             entropy_with_designs_B = entropy_np(probs_batch_B)      # [N]
 

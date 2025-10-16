@@ -123,7 +123,7 @@ class Meta_Model:
         
         return "".join(parts)
 
-    def predict_batch(self, nodes, query, asked_queries, neighbors=None, observed=None, estimated=None, mode=None, options={'A': 'Support', 'B': 'Oppose'}):
+    def predict_batch(self, nodes, query, asked_queries, neighbors=None, observed=None, estimated=None, mode=None, options={'A': 'Support', 'B': 'Oppose'}, per_gpu_batch_size=256):
         """
         Generate probabilities for each node in batch.
         """
@@ -155,7 +155,7 @@ class Meta_Model:
         # ---- send prompts to LLM ----
         # Here you’d call your underlying LM to get logits / probs
         # Example: returns list of probability distributions
-        probs_batch = self.score_candidates(prompts, options=["A", "B"], per_gpu_batch_size=512)
+        probs_batch = self.score_candidates(prompts, options=["A", "B"], per_gpu_batch_size=per_gpu_batch_size)
 
         return probs_batch
     

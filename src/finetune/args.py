@@ -17,7 +17,7 @@ def parse_arguments():
     parser.add_argument(
         "--dataset",
         type=str,
-        choices=["ces", "ces_golden",  "ces_golden_demo"],
+        choices=["ces", "ces_golden",  "ces_golden_demo", "ces_pro", "ces_promax", "ces_promaxmax"],
         default='ces',
         help="dataset name",
     )

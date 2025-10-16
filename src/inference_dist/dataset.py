@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Dict
 from .utils import *
 import pandas as pd
+import random
+from collections import defaultdict
 
 NodeId = str
 QueryId = str
@@ -15,68 +17,6 @@ class SurveyGraph:
     label: Dict[NodeId, Label]  # Neighbor
     y: Dict[NodeId, Dict[QueryId, int]]  # ground-truth answers (if offline)
 
-# @dataclass
-# class History:
-#     # Each round stores: (imputed full response vector for all nodes, the asked query)
-#     nodes: List[NodeId] 
-#     transition: Dict[NodeId, str] = field(default_factory=dict)
-#     asked_queries: List[QueryId] = field(default_factory=list)
-
-#     def __post_init__(self):
-#         self.transition = {nodeid: "" for nodeid in self.nodes}
-#         self.asked_queries = []
-
-#     def add_round(self, queryid, query, options, answers: Dict[str, int], neighbors: Dict[str, List]) -> None:
-#         """
-#         Append a new round with imputed answers and the asked query.
-
-#         Args:
-#             query: the asked query
-#             options: dict[label_id -> str], label meaning lookup
-#             answers: dict[nodeid -> answer]
-#             neighbors: dict[nodeid -> dict[neighbor -> answer]]
-#         """
-#         print(f"\n[Add Round] Query: {queryid}")
-#         print(f"Total nodes updated: {len(answers)}")
-
-#         def _neighbors_answers(y, neighbors):
-#             ans: Dict[NodeId, int] = {}
-#             for u in neighbors:
-#                 ans[u] = int(y[u])
-#             return ans
-        
-#         for nodeid, ans in answers.items():
-#             # compute majority key
-#             neighbors_ans = _neighbors_answers(answers, neighbors[nodeid])
-#             counter = Counter(neighbors_ans.values())
-#             maj_key, maj_count = counter.most_common(1)[0]
-
-#             option_lst = ["A", "B"]
-#             # meaning lookup if provided
-#             maj_meaning = f"({options[str(maj_key)]})"
-#             neighbor_txt = f"<Neighbor>Majority Answer: {option_lst[maj_key-1]}{maj_meaning}"
-
-#             # update transition
-#             self.transition[nodeid] += f"<Question>{query}{neighbor_txt}<Answer>{option_lst[int(ans)-1]}"
-
-#             # --- debug print ---
-#             # print(f" Node {nodeid}: answer={ans}, "
-#             #     f"neighbor_majority={maj_key}{maj_meaning}, "
-#             #     f"maj_count={maj_count}, "
-#             #     f"neighbors={neighbors[nodeid]}")
-
-#         # record asked query
-#         self.asked_queries.append(queryid)
-#         print(f"Appended query '{queryid}' to asked_queries.\n")
-#         print('Example: ', self.transition[self.nodes[0]])
-
-#     def queries_so_far(self) -> List[QueryId]:
-#         """Return all queries that have been asked so far."""
-#         return self.asked_queries
-
-#     def num_rounds(self) -> int:
-#         """Return number of rounds recorded."""
-#         return len(self.asked_queries)
 
 @dataclass
 class Dataset:
@@ -139,9 +79,61 @@ class Dataset:
             self.observed_dict[qid][v] = V_rest[v]
         return self.observed_dict[qid]
 
+
+    def update_neighbors_info(
+        self,
+        K: int = 2,
+        seed: Optional[int] = 42) -> None:
+        """Update self.graph.neighbor = {cid: [neighbor_cid, ...]} using top-K
+        """
+        rng = random.Random(seed)
+        graph_nodes = self.graph.nodes
+
+        # Build {cid: {qid: ans}}
+        by_case: Dict[str, Dict[str, Ans]] = defaultdict(dict)
+        for qid, case_map in self.observed_dict.items():
+            for cid, ans in case_map.items():
+                by_case[cid][qid] = ans  # cid is str; ans is "A"/"B"
+
+        if len(by_case) == 0:
+            # random select K neighbor for each caseid
+            neighbors: Dict[str, List[str]] = {}
+            for cid in graph_nodes:
+                pool = [n for n in graph_nodes if n != cid]
+                rng.shuffle(pool)
+                neighbors[cid] = sorted(pool[:K])  # sort only for stable display
+            self.graph.neighbor = neighbors
+            return self.graph.neighbor
+
+        case_ids = list(by_case.keys())
+        qids_by_case = {cid: set(qa.keys()) for cid, qa in by_case.items()}
+
+        def sim(a: str, b: str) -> Optional[float]:
+            shared = qids_by_case[a] & qids_by_case[b]
+            m = len(shared)   
+            qa, qb = by_case[a], by_case[b]
+            matches = sum(qa[q] == qb[q] for q in shared)
+            return matches / m
+
+  
+        for cid in case_ids:
+            cand: List[Tuple[str, float]] = []
+            for nid in case_ids:
+                if nid == cid:
+                    continue
+                s = sim(cid, nid)
+                if s is not None:
+                    cand.append((nid, float(s)))
+
+            cand.sort(key=lambda x: (-x[1], x[0]))
+            chosen = cand[:K]
+            self.graph.neighbor[cid] = [u for u, _ in chosen]
+        
+        return self.graph.neighbor
+
     
     @staticmethod
-    def load_dataset(df_survey, df_heldout, neighbors_info, codebook, verbose: bool = False):
+    def load_dataset(df_survey, df_heldout, neighbors_info, codebook, top_k_nei=20, verbose: bool = False):
 
         # Use node universe from neighbors (they define the graph)
         Xpool = [c for c in df_survey.columns if c != "caseid"]
@@ -168,12 +160,28 @@ class Dataset:
         Nei: Dict[NodeId, List[NodeId]] = {}
         for cid, val in neighbors_info.items():
             cid = str(cid)
-            Nei[cid] = val["topk_ids"]
-        
+            if cid in all_nodes:
+                Nei[cid] = val["neighbors"][:top_k_nei]
+            # Nei[cid] = []
+
+        # rng = random.Random(42)
+        # noise_frac = 1  # add ~10% as noise
+        # for cid, val in neighbors_info.items():
+        #     cid = str(cid)
+        #     if cid in all_nodes:
+        #         base = [str(x) for x in val["neighbors"]][:top_k_nei]
+        #         base = [n for n in base if n in all_nodes and n != cid]
+        #         # choose noise from nodes not already neighbors and not self
+        #         candidates = list(set(all_nodes) - set(base) - {cid})
+        #         k_noise = min(len(candidates), max(1, int(round(len(base) * noise_frac))) if base else 1)
+        #         noise = rng.sample(candidates, k_noise) if k_noise > 0 else []
+        #         Nei[cid] = base + noise
+        ##########################################
         Label = dict()
         for cid, val in neighbors_info.items():
             cid = str(cid)
-            Label[cid] = val["community"]
+            if cid in all_nodes:
+                Label[cid] = val["community"]
 
         # 2) Question Options (store cardinality, not list of keys)
         option_sizes: Dict[QueryId, int] = {}

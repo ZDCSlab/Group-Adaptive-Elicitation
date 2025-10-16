@@ -4,6 +4,60 @@ import json
 from typing import Any, Callable, Dict, Hashable, List, Mapping, Optional, Tuple
 import numpy as np
 
+from collections import defaultdict
+import math
+
+def build_group_candidates(nodes, node_label_dict):
+    """
+    node_label_dict: dict-like so that node_label_dict[node_id] -> group_id
+    returns: dict[group_id] -> list[node_id]
+    """
+    groups = defaultdict(list)
+    for n in nodes:
+        g = node_label_dict.get(n, None)   # or raise if missing
+        if g is not None:
+            groups[g].append(n)
+    return dict(groups)
+
+def allocate_k_per_group(groups, k_total=None, k_each=None):
+    """
+    Exactly one of (k_total, k_each) must be provided.
+    - k_each: fixed picks per group
+    - k_total: distribute proportionally to group sizes (rounding + residual fix)
+    returns: dict[group_id] -> k for that group
+    """
+    if (k_total is None) == (k_each is None):
+        raise ValueError("Specify exactly one of k_total or k_each.")
+
+    sizes = {g: len(v) for g, v in groups.items()}
+    if k_each is not None:
+        return {g: min(k_each, sizes[g]) for g in groups}
+
+    # proportional allocation
+    total = sum(sizes.values())
+    if total == 0 or k_total == 0:
+        return {g: 0 for g in groups}
+
+    # initial floor allocation
+    k_by_group = {g: min(len(groups[g]), math.floor(k_total * sizes[g] / total)) for g in groups}
+    assigned = sum(k_by_group.values())
+    # distribute remaining (largest fractional parts, but capped by group size)
+    # compute fractional parts for tie-breaking
+    fracs = sorted(
+        ((g, (k_total * sizes[g] / total) - math.floor(k_total * sizes[g] / total)) for g in groups),
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    i = 0
+    while assigned < k_total and i < len(fracs):
+        g = fracs[i][0]
+        if k_by_group[g] < sizes[g]:
+            k_by_group[g] += 1
+            assigned += 1
+        i += 1
+    return k_by_group
+
+
 def options_to_string(options: dict, prefix="Options: ", sep=", "):
     """
     Render {"1":"Yes","2":"No"} -> "Options: [1] Yes, [2] No"

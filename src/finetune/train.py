@@ -105,7 +105,6 @@ def train_accelerate(args):
 
         # —— get one batch
         X, Y, gradient_mask, nmask = dataset.get_batch('train', args.batch_size, args.block_size)
-        # print('dataset.get_batch')
         X = X.to(accelerator.device)
         Y = Y.to(accelerator.device)
         gradient_mask = gradient_mask.to(accelerator.device)
@@ -164,6 +163,7 @@ def train_accelerate(args):
         if (iter_num % args.eval_interval == 0) or (iter_num == args.epochs - 1):
             accelerator.wait_for_everyone()
             if accelerator.is_main_process:
+                print(f"[iter {iter_num}] Evaluation")
                 model.eval()
                 with torch.no_grad():
                     core_model = accelerator.unwrap_model(model)

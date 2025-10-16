@@ -1,0 +1,6 @@
+{"iteration": 0, "selected_queries": "None", "mean_acc": 0.7061965811965812, "mean_ppl": "2.0979002"}
+{"iteration": 1, "selected_queries": "332f", "mean_acc": 0.7564102564102564, "mean_ppl": "1.8511512"}
+{"iteration": 2, "selected_queries": "334b", "mean_acc": 0.8002136752136753, "mean_ppl": "1.7032133"}
+{"iteration": 3, "selected_queries": "332c", "mean_acc": 0.8108974358974359, "mean_ppl": "1.6691028"}
+{"iteration": 4, "selected_queries": "332b", "mean_acc": 0.8108974358974359, "mean_ppl": "1.6931301"}
+{"iteration": 5, "selected_queries": "334c", "mean_acc": 0.8141025641025641, "mean_ppl": "1.6682233"}

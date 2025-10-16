@@ -15,6 +15,8 @@ __pycache__/
 
 logs/
 wandb/
-results/
-results_new/
 
+# ignore any directory whose name contains 'result'
+**/*results/
+results/
+**/*result/
