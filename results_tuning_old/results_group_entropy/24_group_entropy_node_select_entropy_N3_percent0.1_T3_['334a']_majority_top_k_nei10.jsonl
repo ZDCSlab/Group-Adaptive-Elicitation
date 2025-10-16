@@ -1,4 +1,0 @@
-{"iteration": 0, "selected_queries": "None", "all_acc": {"334a": 0.6677350427350427}, "all_ppl": {"334a": "2.150439"}, "mean_acc": 0.6677350427350427, "mean_ppl": "2.150439", "asked_respodent": 0, "migs_count": 0}
-{"iteration": 1, "selected_queries": "333d", "all_acc": {"334a": 0.6677350427350427}, "all_ppl": {"334a": "2.184996"}, "mean_acc": 0.6677350427350427, "mean_ppl": "2.184996", "asked_respodent": 93, "migs_count": 93}
-{"iteration": 2, "selected_queries": "332g", "all_acc": {"334a": 0.7008547008547008}, "all_ppl": {"334a": "1.9761018"}, "mean_acc": 0.7008547008547008, "mean_ppl": "1.9761018", "asked_respodent": 93, "migs_count": 93}
-{"iteration": 3, "selected_queries": "334g", "all_acc": {"334a": 0.6677350427350427}, "all_ppl": {"334a": "2.1222267"}, "mean_acc": 0.6677350427350427, "mean_ppl": "2.1222267", "asked_respodent": 93, "migs_count": 93}

@@ -1,8 +1,0 @@
-{"iteration": 0, "selected_queries": "None", "mean_acc": 0.7094017094017094, "mean_ppl": "nan"}
-{"iteration": 0, "selected_queries": "None", "mean_acc": 0.7094017094017094, "mean_ppl": "2.2996492"}
-{"iteration": 1, "selected_queries": "332f", "mean_acc": 0.7980769230769231, "mean_ppl": "1.8134543"}
-{"iteration": 0, "selected_queries": "None", "mean_acc": 0.7094017094017094, "mean_ppl": "2.2996492"}
-{"iteration": 1, "selected_queries": "332f", "mean_acc": 0.7980769230769231, "mean_ppl": "1.8133423"}
-{"iteration": 0, "selected_queries": "None", "mean_acc": 0.7094017094017094, "mean_ppl": "2.2996492"}
-{"iteration": 1, "selected_queries": "331a", "mean_acc": 0.9049145299145299, "mean_ppl": "1.4092659"}
-{"iteration": 2, "selected_queries": "327b", "mean_acc": 0.9049145299145299, "mean_ppl": "1.4074156"}
