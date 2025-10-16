@@ -17,6 +17,8 @@ logs/
 wandb/
 
 # ignore any directory whose name contains 'result'
-**/*results/
+**/*results*/
 results/
-**/*result/
+**/*results*/
+**/*result*/
+result*/
