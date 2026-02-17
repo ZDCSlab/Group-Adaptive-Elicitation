@@ -1,6 +1,11 @@
 dataset:
   name: twin
   identity_col: caseid
+  raw_data_path: twin/raw_data/Twin-2K-500
+  codebook_path: twin/codebook.jsonl
+  all_responses_path: twin/data/twin_responses.csv
+  user_split_path: twin/data/user_split.json
+
 
 region:
   column: BLOCK0QID11_W1
@@ -25,8 +30,10 @@ demographics:
 splits:
   id_col: caseid
   region_split: true
-  in_distribution: South
-  out_of_distribution: West
+  in_distribution_region: South
+  out_of_distribution_region: West
+  val_size: 0.2
+  seed: 42
 
 
 questions:

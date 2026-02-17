@@ -1,5 +1,6 @@
 # Data / notebooks / builds
 **/raw_data/**
+**/processed_data/*.jsonl
 
 *.log
 *.tmp
