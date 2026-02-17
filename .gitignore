@@ -2,6 +2,8 @@
 **/Twin-2K-500/**
 **/processed_data/*.jsonl
 
+
+*.dta
 *.log
 *.tmp
 *.ipynb_checkpoints/
