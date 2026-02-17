@@ -1,5 +1,5 @@
 # Data / notebooks / builds
-**/raw_data/**
+**/Twin-2K-500/**
 **/processed_data/*.jsonl
 
 *.log
