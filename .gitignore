@@ -1,10 +1,10 @@
 # Data / notebooks / builds
-dataset/ces_golden
-dataset/ces
+**/raw_data/**
 
 *.log
 *.tmp
 *.ipynb_checkpoints/
+*.parquet
 
 # Python
 __pycache__/

@@ -68,10 +68,27 @@ Ensure the package is on `PYTHONPATH` when running scripts:
 export PYTHONPATH=/path/to/Group-Adaptive-Elicitation:$PYTHONPATH
 ```
 
-## Data
+## 📊 Datasets
 
-TBD
+This project utilizes three primary datasets. To ensure the preprocessing scripts function correctly, please download the raw data and organize it according to the structure specified below.
 
+---
+
+### 1. Download Sources
+
+| Dataset | Focus | Source Link |
+| :--- | :--- | :--- |
+| **CES** | Cooperative Election Study | [Harvard Dataverse](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/CETPVT) |
+| **OpinionQA** | Pew Research Public Opinion (W50, W54, W92) | [Pew Research Center](https://www.pewresearch.org/american-trends-panel-datasets/) |
+| **Twin-2k** | LLM Digital Twin Dataset | [Hugging Face](https://huggingface.co/datasets/LLM-Digital-Twin/Twin-2K-500) |
+
+---
+
+### 2. Setup Instructions
+
+1. Place the files under: `dataset/{ces,opinionqa,twin}/raw_data`.
+2. 
+ 
 
 ## Usage
 
