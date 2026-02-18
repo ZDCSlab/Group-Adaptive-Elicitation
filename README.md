@@ -18,8 +18,6 @@ We study adaptive group elicitation, a framework that jointly selects which ques
 
 ## Project structure
 
-TBD
-
 ```
 Group-Adaptive-Elicitation/
 ├── scripts/
@@ -52,21 +50,23 @@ Group-Adaptive-Elicitation/
         └── training_utils.py
 ```
 
-## Setup
 
-From the project root:
+## Set Up
 
+1. Clone Group-Adaptive-Elicitation repository.
 ```bash
-# Install PyTorch and PyTorch Geometric (see pytorch.org / pyg.org for your CUDA version).
-# Then typical dependencies (infer from imports):
-pip install torch torch-geometric pandas numpy pyyaml scikit-learn tqdm wandb accelerate
+    git clone https://github.com/ZDCSlab/Group-Adaptive-Elicitation.git
+    cd Group-Adaptive-Elicitation
 ```
 
-Ensure the package is on `PYTHONPATH` when running scripts:
+2. Create the environment.
 
 ```bash
-export PYTHONPATH=/path/to/Group-Adaptive-Elicitation:$PYTHONPATH
+    conda create -n gae python=3.9
+    conda activate gae
+    pip install -r requirements.txt
 ```
+
 
 ## 📊 Datasets
 
