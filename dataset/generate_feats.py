@@ -48,7 +48,8 @@ def unique_caseids(df):
         if x not in seen:
             seen.add(x)
             out.append(x)
-    return out
+    # convert to str
+    return [str(x) for x in out]
 
 
 if __name__ == "__main__":

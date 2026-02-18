@@ -2,7 +2,7 @@ import argparse
 import torch
 import os
 
-from src.gnn.model import GEMSModel
+from src.gnn.model import HGNNModel
 from src.gnn.dataset import QAGraph, EpochMasker, load_split_from_json, load_qa_graph
 from src.gnn.utils import load_config, parse_overrides, deep_update
 from src.gnn.train import run_training_loop
@@ -24,12 +24,14 @@ def pick_device(name: str):
     return torch.device(name)
 
 
-
 def main():
     args = parse_args()
     cfg = load_config(args.config)
     overrides = parse_overrides(args.set)
     cfg = deep_update(cfg, overrides)
+
+    checkpoint_dir = cfg["checkpoint"]["ckpt_dir"]
+    os.makedirs(checkpoint_dir, exist_ok=True)
 
     log_dir = cfg["logs"]["log_dir"]
     os.makedirs(log_dir, exist_ok=True)
@@ -50,7 +52,7 @@ def main():
 
     # Model/Optimizer
     device = pick_device(cfg["train"].get("device", "auto"))
-    model = GEMSModel(
+    model = HGNNModel(
         graph.data,
         d_in=int(cfg["model"]["hidden"]),
         d_h=int(cfg["model"]["hidden"]),

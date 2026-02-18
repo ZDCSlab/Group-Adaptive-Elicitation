@@ -60,10 +60,10 @@ def build_graph_from_raw(
     # --- load ---
     df_demo = demo_csv
     df_question = question_csv
-    df_demo["caseid"] = df_demo["caseid"].astype(str)
-    df_question["caseid"] = df_question["caseid"].astype(str)
+    df_demo["caseid"] = df_demo["caseid"].astype(int).astype(str)
+    df_question["caseid"] = df_question["caseid"].astype(int).astype(str)
 
-    codebook = load_jsonl_as_dict_of_dict(codebook_path, key="id")
+    codebook = load_jsonl_as_dict(codebook_path, key="id")
 
     # --- users ---
     user_nodes = df_demo["caseid"].tolist()
@@ -164,7 +164,7 @@ def build_graph_from_raw(
     return data, uid2idx, qid2idx, qid2choices, edges_u_to_qopt
 
 
-def load_jsonl_as_dict_of_dict(path: str, key: str) -> Dict[str, dict]:
+def load_jsonl_as_dict(path: str, key: str) -> Dict[str, dict]:
     data = {}
     with open(path, "r", encoding="utf-8") as f:
         for line in f:

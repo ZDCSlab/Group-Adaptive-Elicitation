@@ -17,12 +17,7 @@ __pycache__/
 .venv/
 .env
 
+# Logs / Checkpoints / Wandb
 logs/
+checkpoints/
 wandb/
-
-# ignore any directory whose name contains 'result'
-**/*results*/
-results/
-**/*results*/
-**/*result*/
-result*/

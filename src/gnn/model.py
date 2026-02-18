@@ -17,11 +17,13 @@ class LearnableTables(nn.Module):
         super().__init__()
         self.sub_embed = nn.Embedding(num_subgroups, d_in)
         self.cho_embed = nn.Embedding(num_choices, d_in)
-        self.user_token = nn.Parameter(torch.zeros(1, d_in))
+        # self.user_token = nn.Parameter(torch.zeros(1, d_in))
+        self.register_buffer("user_token", torch.zeros(1, d_in))
+
 
         nn.init.normal_(self.sub_embed.weight, std=0.02)
         nn.init.normal_(self.cho_embed.weight, std=0.02)
-        nn.init.normal_(self.user_token, std=0.02)
+        # nn.init.normal_(self.user_token, std=0.02)
         self.num_users = num_users
 
     def forward(self) -> Dict[str, torch.Tensor]:
@@ -123,7 +125,8 @@ class DotSoftmaxDecoder(nn.Module):
                 users: torch.LongTensor,
                 option_ids: torch.LongTensor,
                 gold_idx: Optional[torch.LongTensor] = None,
-                return_logits: bool = False):  # <--- New parameter
+                mask: Optional[torch.BoolTensor] = None,       # [B, K] True=valid, False=pad
+                return_logits: bool = False):  
         
         tau = torch.exp(self.log_tau)
         zu = z_user[users]               # [B, d]
@@ -131,6 +134,13 @@ class DotSoftmaxDecoder(nn.Module):
         
         # scores are logits (unnormalized scores)
         scores = torch.einsum('bd,bkd->bk', zu, zopts) / tau   
+
+        # ---- mask padding logits ----
+        if mask is not None:
+            # Use a large negative number that is safe for fp16/bf16
+            neg = torch.finfo(scores.dtype).min  # e.g., ~-3e38 for fp32
+            scores = scores.masked_fill(~mask, neg)
+
         probs = F.softmax(scores, dim=-1)                      # [B, K]
 
         # --- 1. Inference mode ---
@@ -151,7 +161,7 @@ class DotSoftmaxDecoder(nn.Module):
             return loss, acc, probs         # return only Tensor
 
 
-class GEMSModel(nn.Module):
+class HGNNModel(nn.Module):
     """Paper-faithful: LearnableTables + RGCNEncoder + DotSoftmaxDecoder."""
     def __init__(self, data: HeteroData, d_in: int = 64, d_h: int = 64, layers: int = 2, dropout: float = 0.0):
         super().__init__()
@@ -193,5 +203,6 @@ class GEMSModel(nn.Module):
             batch['users'],      # Indices for user nodes in z['user']
             batch['option_ids'], # Indices for question nodes in z['question']
             gold_idx=gold_idx,
+            mask=batch.get('mask', None),
             return_logits=return_logits 
         )

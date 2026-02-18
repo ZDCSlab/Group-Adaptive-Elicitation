@@ -11,7 +11,7 @@ import pandas as pd
 import os
 
 # --- GNN Imports ---
-from utils import build_graph_from_raw
+from src.gnn.utils import build_graph_from_raw
 
 
 UserIdx = int

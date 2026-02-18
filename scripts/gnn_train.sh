@@ -1,5 +1,9 @@
-export PYTHONPATH=/home/ruomeng/gae_graph/src:$PYTHONPATH
+#!/bin/bash
+export PYTHONPATH=src:$PYTHONPATH
+gpus=0
 
-CUDA_VISIBLE_DEVICES=1 python /home/ruomeng/gae_graph/src/gnn/train.py --config /home/ruomeng/gae_graph/src/gnn/config_ces.yaml
+CUDA_VISIBLE_DEVICES=$gpus python scripts/run_gnn_train.py --config scripts/args_gnn/config_ces.yaml
 
-# CUDA_VISIBLE_DEVICES=1 python /home/ruomeng/gae_graph/src/gnn/train.py --config /home/ruomeng/gae_graph/src/gnn/config_opinionQA.yaml
+CUDA_VISIBLE_DEVICES=$gpus python scripts/run_gnn_train.py --config scripts/args_gnn/config_opinionqa.yaml
+
+CUDA_VISIBLE_DEVICES=$gpus python scripts/run_gnn_train.py --config scripts/args_gnn/config_twin.yaml

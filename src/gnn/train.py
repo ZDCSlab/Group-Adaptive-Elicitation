@@ -1,6 +1,6 @@
 import torch
 import os
-from dataset import build_loaders_for_epoch
+from src.gnn.dataset import build_loaders_for_epoch
 
 
 

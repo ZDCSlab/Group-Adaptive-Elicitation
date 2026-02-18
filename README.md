@@ -119,14 +119,17 @@ This script will:
 
 ## Usage
 
-### 1. Train the GNN
+### 1. Train the Heterogeneous GNNs
 
-Requires a YAML config with `data`, `model`, `train`, `optim`, `split`, `logs`, `checkpoint` (see `src/gnn/utils.py` and `src/gnn/dataset.py`).
+Requires a YAML config with `data`, `model`, `train`, `optim`, `split`, `logs`, `checkpoint` (see `scripts/args_gnn/config_{ces,opinionqa,twin}.yaml`). You can launch training via the provided shell script:
 
 ```bash
-python scripts/run_gnn_train.py --config /path/to/gnn_config.yaml
-# Optional overrides:
-python scripts/run_gnn_train.py --config /path/to/config.yaml --set train.epochs=100 optim.lr=0.001
+sh scripts/gnn_train.sh
+```
+Or run a specific dataset configuration manually. For example:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/run_gnn_train.py --config scripts/args_gnn/config_ces.yaml
 ```
 
 ### 2. Meta-train the LLM

@@ -1,0 +1,34 @@
+data:
+  base_dir:  dataset/ces/data
+  id_dist: South
+  ood_dist: West
+  codebook_path: dataset/ces/codebook.jsonl
+  demo_cols: [birthyr, race, gender4, educ, faminc_new, religpew, pid3, ideo5]
+  question_cols: [327a,327b,327d,330a,330b,330c,331a,331b,331d,332a,332b,332c,332d,332e,332f,332g,333a,333b,333c,333d,334a,334b,334c,334d,334e,334f,334g,334h,355a,355e]
+
+split:
+  path: dataset/ces/data/user_split.json  
+  mode: by_user       # ignored if path is set
+  mask_ratio: 0.5
+
+model:
+  hidden: 64         
+  layers: 2
+  dropout: 0.10
+
+optim:
+  lr: 0.002
+  weight_decay: 0.0001
+
+train:
+  epochs: 500
+  batch_size: 2048
+  seed: 42
+  device: cuda        # auto | cpu | cuda
+
+checkpoint:
+  ckpt_dir: checkpoints/gnn
+  ckpt_prefix: gnn_ces_South_West
+
+logs:
+  log_dir: logs/gnn
