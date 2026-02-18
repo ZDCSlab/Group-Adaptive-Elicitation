@@ -13,7 +13,7 @@ We study *adaptive group elicitation*, a multi-round decision-making framework i
 
 This closed-loop procedure queries a small, informative subset of individuals while recovering population-level response patterns from sparse and incomplete observations.
 
-## Project structure
+## Project Structure
 
 ```
 Group-Adaptive-Elicitation/
