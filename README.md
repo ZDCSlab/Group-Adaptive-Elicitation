@@ -68,7 +68,7 @@ Group-Adaptive-Elicitation/
 ```
 
 
-## 📊 Datasets
+## Datasets
 
 This project utilizes three primary datasets. To ensure the preprocessing scripts function correctly, please download the raw data and organize it according to the structure specified below.
 
@@ -132,7 +132,7 @@ Or run a specific dataset configuration manually. For example:
 CUDA_VISIBLE_DEVICES=0 python scripts/run_gnn_train.py --config scripts/args_gnn/config_ces.yaml
 ```
 
-### 2. Meta-train the LLM
+### 2. Meta-train the LLMs
 
 Uses Hugging Face `accelerate` and model/dataset args (see `scripts/run_meta_train.py` and `src/meta_train/args.py`).
 
