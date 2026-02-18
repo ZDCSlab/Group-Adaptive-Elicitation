@@ -5,45 +5,44 @@
 
 This repository contains code for the paper [Whom to Query for What: Adaptive Group Elicitation via Multi-Turn LLM Interactions](https://arxiv.org/pdf/2602.14279) by Ruomeng Ding*, Tianwei Gao*, Thomas P. Zollo, Eitan Bachmat, Richard Zemel, and Zhun Deng.
 
-We study adaptive group elicitation, a framework that jointly selects which questions to ask and which respondents to query under limited budgets. Our approach combines an LLM-based expected information gain objective with heterogeneous graph neural network propagation to impute missing responses and guide respondent selection.
+We study *adaptive group elicitation*, a multi-round decision-making framework in which a system selects both which questions to ask and which respondents to query under explicit query and participation budgets. Unlike prior approaches that optimize question selection over a fixed respondent pool, our method integrates:
 
-> 🚧 **This repository is currently under active development.** 🚧
+- an LLM-based expected information gain objective to score and select candidate questions, and
 
+- a heterogeneous graph neural network (HGNN) to aggregate observed responses and participant attributes, impute missing responses, and guide respondent selection through learned population structure.
 
-
-## Overview
-- **LLM**: Predictor pool for question-level predictions; used for query selection (e.g. information gain, MCTS lookahead) and optional imputation.
-- **GNN**: Heterogeneous graph of users, question-option nodes, and demographic subgroups (RGCN). Used to score users by uncertainty (entropy, margin, etc.) for adaptive node selection.
-- **Inference**: Two entrypoints—**baseline** (LLM-only query selection) and **GAE** (GNN + LLM hybrid with node and query selection strategies).
+This closed-loop procedure queries a small, informative subset of individuals while recovering population-level response patterns from sparse and incomplete observations.
 
 ## Project structure
 
 ```
 Group-Adaptive-Elicitation/
 ├── scripts/
-│   ├── run_gnn_train.py      # Train GNN from config (YAML)
-│   ├── run_meta_train.py     # Meta-train LLM (e.g. Llama) with accelerate
-│   ├── run_inference_baseline.py  # Adaptive rounds, LLM query selection only
-│   ├── run_inference_gae.py       # Adaptive rounds, GNN node + LLM query selection
-│   ├── gnn_train.sh
-│   └── meta_train.sh
+│   ├── run_gnn_train.py           # Train GNN from YAML config
+│   ├── run_meta_train.py          # Meta-train LLM (e.g. Llama) with Accelerate
+│   ├── run_inference_baseline.py  # Adaptive elicitation, LLM-only (no GNN)
+│   ├── run_inference_gae.py       # Adaptive elicitation, Ours (GNN + LLM)
+│   ├── run_gnn_train.sh
+│   ├── run_meta_train.sh
+│   ├── run_inference_baseline.sh
+│   ├── run_inference_gae.sh
+│   ├── args_gnn/                  # GNN configs
+│   ├── args_llm/                  # LLM model configs
+│   └── runs/                      # Query/eval splits per dataset
 └── src/
-    ├── gnn/                  # Graph model and data
-    │   ├── dataset.py        # QAGraph, splits, load_qa_graph, build_graph_from_raw
-    │   ├── model.py          # GEMSModel (RGCN)
-    │   ├── train.py          # Training loop
-    │   └── utils.py          # Config, overrides, build_graph_from_raw
-    ├── inference/
-    │   ├── dataset.py        # Survey state / candidate questions
-    │   ├── model.py          # LLM PredictorPool
-    │   ├── evaluation.py    # Evaluate on held-out / hard groups
-    │   ├── gnn_predictor.py  # GNNElicitationPredictor
-    │   ├── select_node.py    # NodeSelector (entropy, margin, diversity, …)
-    │   ├── select_query.py   # select_queries (info_gain, etc.)
-    │   ├── select_query_lookahaed.py  # MCTS lookahead
-    │   ├── utils_gnn.py      # GNN helpers, gold answers from edges
-    │   └── utils_llm.py      # LLM helpers, imputation, codebook
-    └── meta_train/           # LLM meta-training
+    ├── gnn/                       # Heterogeneous GNN (user–question graph)
+    │   ├── dataset.py             # QAGraph, build_loaders_for_epoch...
+    │   ├── model.py               # HGNNModel (RGCN encoder + decoder)
+    │   ├── train.py               # GNN training loop
+    │   └── utils.py          
+    ├── inference/                 # Adaptive elicitation 
+    │   ├── dataset.py             # Dataset, SurveyGraph...
+    │   ├── model.py               # PredictorPool (multi-GPU LLM inference)
+    │   ├── evaluation.py          # Held-out evaluation (accuracy, Brier score, PPL)
+    │   ├── gnn_predictor.py       # GNNElicitationPredictor...
+    │   ├── select_query.py        # select_queries (info_gain), select_queries_mcts (MCTS lookahead)
+    │   └── utils.py              
+    └── meta_train/                # LLM meta-training
         ├── args.py
         ├── dataset.py
         ├── train.py
@@ -160,37 +159,51 @@ accelerate launch --config_file scripts/accelerate/default_config.yaml \
 - Configure model-specific arguments in `scripts/model_args/{model_name}.yaml`.
 - The `--wandb` flag enables experiment tracking via Weights & Biases.
 
-### 3. Run inference
+### 3. Run Inference (Adaptive Elicitation)
 
-**Baseline (LLM-only query selection):**
-
+Multi-GPU inference is powered by **Ray**. You can execute the provided shell scripts for a quick start or run the Python entry points manually for custom configurations.
 ```bash
-python scripts/run_inference_baseline.py \
-  --llm_checkpoint /path/to/llm \
-  --query_selection info_gain \
-  --node_selection entropy \
-  --node_selection_prec 0.1 \
-  --runs /path/to/runs.csv \
-  --dataset /path/to/dataset \
-  --infer_data /path/to/infer_data.csv
+sh scripts/run_inference_baseline.sh   # baseline: meta model only
+sh scripts/run_inference_gae.sh       # ours: GAE (GNN + meta model + imputation)
 ```
 
-**GAE (GNN + LLM):**
+Or run a single configuration manually:
+
+#### **Baseline**: Meta-trained model for query selection (no GNN integration).
 
 ```bash
-python scripts/run_inference_gae.py \
-  --llm_checkpoint /path/to/llm \
-  --gnn_config_path /path/to/gnn_config.yaml \
-  --query_selection info_gain \
-  --node_selection entropy \
-  --node_selection_prec 0.1 \
-  --runs /path/to/runs.csv \
-  --dataset /path/to/dataset \
-  --infer_data /path/to/infer_data.csv
+log_path=results/${dataset}/meta_${model_name}-Q-${query_selection}-N-${node_selection}
+CUDA_VISIBLE_DEVICES=$cuda python scripts/run_inference_baseline.py --cuda $cuda \
+  --llm_batch_size $llm_batch_size --T $T \
+  --dataset $dataset --infer_data $infer_data --runs $runs --runs_id $runs_id \
+  --llm_checkpoint $checkpoint --log_path $log_path \
+  --query_selection $query_selection --node_selection $node_selection --node_selection_prec $node_selection_prec
 ```
 
-Use `--imputation` and `--impute_thres` for LLM-based imputation. Query selection can be `random`, `mean_entropy`, `info_gain`, or `mcts_lookahead` (GAE). Node selection can be `random`, `entropy`, `margin`, `full`, `info_gain`, `entropy_diversity`, etc., depending on the script.
+#### **Ours**: Meta-trained model for query selection with GNN-guided node selection and feature imputation.
 
+```bash
+log_path=results/${dataset}/gae_${model_name}-Q-${query_selection}-N-${node_selection}
+CUDA_VISIBLE_DEVICES=$cuda python scripts/run_inference_gae.py --cuda $cuda \
+  --llm_batch_size $llm_batch_size --T $T \
+  --dataset $dataset --infer_data $infer_data --runs $runs --runs_id $runs_id \
+  --llm_checkpoint $checkpoint --log_path $log_path \
+  --gnn_config_path $gnn_config_path --gnn_batch_size $gnn_batch_size \
+  --query_selection $query_selection --node_selection $node_selection --node_selection_prec $node_selection_prec \
+  --imputation
+```
+
+#### Key Parameter Reference
+
+| Parameter | Type / Options | Description |
+|-----------|-----------------|-------------|
+| `--query_selection` | `random`, `info_gain`, `mcts_lookahead` | Strategy for selecting the next query. |
+| `--node_selection` | `random`, `relational` | Method for selecting which respondent to query. |
+| `--node_selection_prec` | float | The proportion of respondents to query per round (e.g., 0.5 = 50%). |
+| `--T` | int | Number of elicitation rounds. |
+| `--imputation` | flag | Enable GNN-based pseudo-label imputation. |
+
+- The inference results, including logs and performance metrics, will be saved under the `results/` directory using the following naming convention: `results/${dataset}/${method}_${model_name}-Q-${query_selection}-N-${node_selection}`.
 
 ## Cite Our Work
 ```

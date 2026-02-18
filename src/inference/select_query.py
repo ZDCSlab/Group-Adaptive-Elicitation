@@ -1,15 +1,24 @@
 from __future__ import annotations
-
 from typing import Dict, Hashable, Iterable, List, Mapping, Optional, Union, Callable, Sequence, List, Any
 import numpy as np
-import torch
-from collections import Counter
-import copy
+import numpy as np
+from copy import deepcopy
+import logging
 from tqdm import tqdm
 
 NodeId = Hashable
 QueryId = Hashable
 Label = Union[int, float]
+
+
+def masked_entropy(probs, mask, eps=1e-12):
+    # Aligns with: -torch.sum(probs * torch.log(probs), dim=-1)
+    p = probs * mask[None, :, :]
+    p /= (p.sum(axis=-1, keepdims=True) + eps)
+    log_p = np.zeros_like(p)
+    pos = p > eps
+    log_p[pos] = np.log(p[pos])
+    return -(p * log_p).sum(axis=-1) # [N_Nodes, N_Heldout]
 
 
 
@@ -28,15 +37,6 @@ def select_queries(dataset, pool, nodes, Xavail, observed, cur_asked_queries, ve
     mask_heldout = np.zeros((len(heldout_qids), max_h_opts), dtype=bool)
     for i, opts in enumerate(heldout_opts):
         mask_heldout[i, :len(opts)] = True
-
-    def masked_entropy(probs, mask, eps=1e-12):
-        # Aligns with: -torch.sum(probs * torch.log(probs), dim=-1)
-        p = probs * mask[None, :, :]
-        p /= (p.sum(axis=-1, keepdims=True) + eps)
-        log_p = np.zeros_like(p)
-        pos = p > eps
-        log_p[pos] = np.log(p[pos])
-        return -(p * log_p).sum(axis=-1) # [N_Nodes, N_Heldout]
 
     # -----------------------------------------------------------
     # 2. Baseline Calculation (entropy_without_designs)
@@ -107,8 +107,6 @@ def select_queries(dataset, pool, nodes, Xavail, observed, cur_asked_queries, ve
             expected_h_post += p_y[:, None] * h_post_k
 
         # Final IG: Mean(H_pre) - Mean(E[H_post])
-        # Aligns with: return torch.mean(entropy_without_designs) - torch.mean(torch.stack(design_entropies), dim=0)
-        # Note: ref code uses mean(dim=0) which results in a score per design.
         current_design_ig = baseline_entropy - np.mean(expected_h_post)
         EIG[query_id] = current_design_ig
 
@@ -117,12 +115,213 @@ def select_queries(dataset, pool, nodes, Xavail, observed, cur_asked_queries, ve
         print(f"\n✅ Selection Complete")
         print(f"Selected: {q_star} | Max EIG: {EIG[q_star]:.6f}")
         
-        # Sort and print the top 5 candidates for comparison
         sorted_eig = sorted(EIG.items(), key=lambda x: x[1], reverse=True)
         print("📊 Top 5 EIG Candidates:")
         for qid, score in sorted_eig[:5]:
             print(f"  - {qid}: {score:.6f}")
 
-    return [q_star]
+    return [q_star], EIG
+
+
+
+def select_queries_mcts(dataset, pool, nodes, Xavail, observed_real, predictor_gnn,
+                       depth=3, n_iter=3, top_k=5, confidence_margin=0.0, rng=None):
+
+    # Detailed logging setup
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+    logger = logging.getLogger("MCTS")
+
+    
+    logger.info(f"\n" + "╔" + "═"*58 + "╗")
+    logger.info(f"║ {'🚀 MCTS LOOK-AHEAD INITIALIZED':^56} ║")
+    logger.info(f"╠" + "═"*58 + "╣")
+    logger.info(f"║  Root Candidates: {top_k:<7} | MC Trials: {n_iter:<7} | Depth: {depth:<6} ║")
+    logger.info(f"╚" + "═"*58 + "╝")
+    
+    # --- Pruning (Monte Carlo Tree Search) ---
+    nodes_eval_initial = rng.choice(nodes, size=int(len(nodes) * 0.10), replace=False).tolist()
+    _, initial_eig_dict = select_queries(dataset, pool, nodes_eval_initial, Xavail, observed_real, dataset.asked_queries)
+    top_k_queries = sorted(initial_eig_dict, key=initial_eig_dict.get, reverse=True)[:top_k]
+    
+    logger.info(f"\n📍 [Phase 1] Top-{top_k} Seeds Selected via 1-Step EIG")
+    for idx, qid in enumerate(top_k_queries):
+        logger.info(f"   {idx+1}. {qid:<10} | Score: {initial_eig_dict[qid]:.6f}")
+
+    q_values = {qid: initial_eig_dict[qid] for qid in top_k_queries}
+    # q_values = {qid: 0.0 for qid in top_k_queries}
+    future_gains_summary = {qid: 0.0 for qid in top_k_queries}
+
+    # --- Parallel Trials (Monte Carlo Tree Search) ---
+    # [Monte Carlo Tree Search expansion showing a root node branching into multiple trial paths]
+    for q_root in tqdm(top_k_queries, desc="MCTS Expansion"):
+        total_future_gain = 0
+        logger.info(f"\n🔭 Simulating Future Paths for: {q_root}")
+
+        for i in range(n_iter):
+            # ISOLATION: sim_observed is our 'Imaginary State'
+            sim_observed = deepcopy(observed_real)
+            sim_asked_queries = dataset.asked_queries + [(q_root, dataset.codebook[q_root]["question"])]
+            cumulative_trial_gain = 0
+            rollout_path_log = []
+            
+            # --- ROOT STEP IMPUTATION ---
+            # GNN fills gaps based on what we 'learned' at root
+            root_preds = predictor_gnn.predict_for_question(q_root, batch_size=8192)
+            pseudo_y_root = inject_pseudo_labels_simulation(q_root, root_preds, sim_observed, confidence_margin, mode='sampling', rng=rng)
+            
+            # CRITICAL: We update the state locally within this trial only
+            if q_root not in sim_observed: sim_observed[q_root] = {}
+            sim_observed[q_root].update(pseudo_y_root)
+            
+            current_Xavail = [q for q in Xavail if q != q_root]
+            
+            # -----------------------------------------------------------
+            # Rollout (Monte Carlo Tree Search)
+            # -----------------------------------------------------------
+            for d in range(depth):
+                if not current_Xavail: break
+                
+                # Update LLM Beliefs: How does the LLM see the world now with GNN's help?
+                sample_size = 0.1
+                nodes_eval_rollout = rng.choice(nodes, size=int(len(nodes) * sample_size), replace=False).tolist()
+                
+                # Selection: Pick best action in this imaginary state
+                _, rollout_eig = select_queries(dataset, pool, nodes_eval_rollout, current_Xavail, 
+                                             sim_observed, sim_asked_queries)
+                top_items = sorted(rollout_eig.items(), key=lambda x: x[1], reverse=True)[:top_k]
+                qs, scores = zip(*top_items)
+                scores = np.array(scores, dtype=np.float64)
+                scores = scores - scores.max()        # numerical stability
+                probs = np.exp(scores)
+                probs = probs / probs.sum()
+
+                q_next = rng.choice(qs, p=probs)
+                reward = rollout_eig[q_next]
+
+                # 3. Transition: GNN Imputation based on q_next
+                gnn_probs = predictor_gnn.predict_for_question(q_next, batch_size=8192)
+                pseudo_y_next = inject_pseudo_labels_simulation(q_next, gnn_probs, sim_observed, confidence_margin, mode='argmax', rng=rng)
+                
+                if q_next not in sim_observed: sim_observed[q_next] = {}
+                sim_observed[q_next].update(pseudo_y_next)
+
+                cumulative_trial_gain += reward
+                rollout_path_log.append(f"{q_next}(+{reward:.3f})")
+                
+                # Advance rollout state
+                current_Xavail = [q for q in current_Xavail if q != q_next]
+                sim_asked_queries.append((q_next, dataset.codebook[q_next]["question"]))
+            
+            total_future_gain += cumulative_trial_gain
+            logger.info(f"   ↳ Trial {i+1}: {' → '.join(rollout_path_log)} | Path Total: {cumulative_trial_gain:.4f}")
+            
+        avg_future_gain = total_future_gain / n_iter
+        future_gains_summary[q_root] = avg_future_gain
+        q_values[q_root] += avg_future_gain
+
+    # --- FINAL SUMMARY ---
+    # [Image of a data table comparing model performance metrics]
+    logger.info(f"\n📊 MCTS FINAL RANKING")
+    logger.info("━" * 85)
+    logger.info(f"{'Query ID':<15} ┃ {'Base EIG':<15} ┃ {'Future Gain (Avg)':<20} ┃ {'Q-Value':<15}")
+    logger.info("━" * 85)
+    
+    for qid in top_k_queries:
+        logger.info(f"{qid:<15} ┃ {initial_eig_dict[qid]:<15.6f} ┃ {future_gains_summary[qid]:<20.6f} ┃ {q_values[qid]:<15.6f}")
+    
+    logger.info("━" * 85)
+    best_q = max(q_values, key=q_values.get)
+    logger.info(f"\n🏆 CHAMPION ACTION: {best_q}")
+    logger.info(f"   Value: {q_values[best_q]:.6f} (Future boost: {future_gains_summary[best_q]:.4f})")
+    
+    return [best_q]
+
+
+def inject_pseudo_labels_simulation(
+    qid,
+    gnn_preds,
+    observed_dict,
+    confidence_margin: float = 0.0,
+    mode: str = "argmax",              # "argmax" | "sampling"
+    rng=None,
+    temp: float = 1.0,                 # temperature for sampling 
+):
+    """
+    Inject high-confidence GNN predictions into observed_dict[qid].
+
+    - Filters uids by max_prob >= 1/K + confidence_margin.
+    - mode:
+        * "argmax": choose argmax under probs_T (default probs_T=probs unless temp!=1)
+        * "sampling": sample under probs_T
+    - Temperature scaling on probs (prob-based): p_T ∝ p^(1/T)
+
+    Returns:
+        injected_labels: {uid: choice_letter}
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+
+    if qid not in observed_dict:
+        observed_dict[qid] = {}
+    current_obs = observed_dict[qid]
+
+    injected_labels = {}
+
+    # Helper: normalize + temperature scaling
+    def _normalize_probs(p: np.ndarray) -> np.ndarray:
+        p = np.asarray(p, dtype=np.float64)
+        s = p.sum()
+        if not np.isfinite(s) or s <= 0:
+            return None
+        p = p / (s + 1e-12)
+        return p
+
+    def _apply_temp(p: np.ndarray, T: float) -> np.ndarray:
+        # prob-based temperature scaling: p_T ∝ p^(1/T)
+        if T is None or T == 1.0:
+            return p
+        pT = np.power(p, 1.0 / float(T))
+        pT = pT / (pT.sum() + 1e-12)
+        return pT
+
+    for uid, info in (gnn_preds or {}).items():
+        if not isinstance(info, dict):
+            continue
+
+        probs_raw = info.get("probs", None)
+        if probs_raw is None:
+            continue
+
+        p = _normalize_probs(probs_raw)
+        if p is None:
+            continue
+
+        K = int(p.shape[0])
+        if K <= 0:
+            continue
+
+        # confidence filter uses normalized p (not temp-scaled)
+        max_prob = float(np.max(p))
+        dynamic_threshold = (1.0 / K) + float(confidence_margin)
+        if max_prob < dynamic_threshold:
+            continue
+
+        labels = [chr(65 + i) for i in range(K)]
+
+        # choose under temperature-scaled distribution (esp. for sampling)
+        pT = _apply_temp(p, temp)
+
+        if mode == "argmax":
+            chosen_idx = int(np.argmax(pT))
+        elif mode == "sampling":
+            chosen_idx = int(rng.choice(np.arange(K), p=pT))
+        else:
+            raise ValueError("mode must be 'argmax' or 'sampling'")
+
+        pseudo_ans = labels[chosen_idx]
+        current_obs[uid] = pseudo_ans
+        injected_labels[uid] = pseudo_ans
+   
+    return injected_labels
 
 

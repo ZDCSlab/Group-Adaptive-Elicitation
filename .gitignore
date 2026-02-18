@@ -20,4 +20,5 @@ __pycache__/
 # Logs / Checkpoints / Wandb
 logs/
 checkpoints/
+results/
 wandb/

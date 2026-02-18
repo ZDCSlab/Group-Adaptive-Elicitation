@@ -1,24 +1,22 @@
 from __future__ import annotations
 import numpy as np
 import json
-from typing import Any, Callable, Dict, Hashable, List, Mapping, Optional, Tuple
-from inference_llm.utils import *
 from sklearn.metrics import f1_score
-from tqdm import tqdm 
+
 
 def evaluate_model(pool, dataset, Y_heldout):
     all_acc, all_ppl, all_f1, all_bs = {}, {}, {}, {}
     held_out_predict = dict()
     
-    # --- 新增：用于存储每个用户的正确情况 ---
-    # key: nodeid, value: 包含 0 或 1 的列表
+    # Store the correctness of each user
+    # key: nodeid, value: list of 0 or 1
     user_results = {nodeid: [] for nodeid in dataset.graph.nodes}
 
     for qid in dataset.X_heldout:
         q_text = dataset.codebook[qid]["question"]
         options = list(dataset.codebook[qid]["options"].keys())
         
-        # --- run inference ---
+        # Run inference
         probs_batch = pool.predict(items=dataset.graph.nodes, shard_arg="nodes", query=q_text, 
                                     candidate_options=options, asked_queries=dataset.asked_queries, 
                                     observed=dataset.observed_dict)
@@ -32,25 +30,24 @@ def evaluate_model(pool, dataset, Y_heldout):
             gold_idx.append(opt2idx[str(Y_heldout[nodeid][qid])])
         gold_idx = np.array(gold_idx)
 
-        # --- 1. 计算 Brier Score (BS) ---
-        # 将 gold_idx 转换为 one-hot 编码
+        # Calculate Brier Score (BS)
+        # Convert gold_idx to one-hot encoding
         num_classes = probs_batch.shape[1]
         gold_one_hot = np.eye(num_classes)[gold_idx]
 
-        # 计算每个样本的平方误差之和，然后取全体平均
-        # brier_scores 是每个样本的分数，bs 是整体平均分
+        # Calculate the sum of squared errors for each sample, then take the average
         brier_scores = np.sum((probs_batch - gold_one_hot) ** 2, axis=1)
         bs = np.mean(brier_scores)
       
-        # --- accuracy ---
+        # Calculate accuracy
         preds = probs_batch.argmax(axis=1)
         
-        # --- 新增：记录每个用户的对错 ---
-        is_correct = (preds == gold_idx)  # 这是一个布尔数组，长度等于 nodes 数量
+        # Record the correctness of each user
+        is_correct = (preds == gold_idx)  # True/False for each user
         for i, nodeid in enumerate(dataset.graph.nodes):
             user_results[nodeid].append(is_correct[i])
 
-        # 原有的 question-level 统计
+        # Calculate accuracy at the question level
         accuracy = is_correct.mean()
         f1 = f1_score(gold_idx, preds, average='macro')
         chosen_probs = probs_batch[np.arange(len(gold_idx)), gold_idx]
@@ -62,7 +59,7 @@ def evaluate_model(pool, dataset, Y_heldout):
         all_f1[qid] = f1
         all_bs[qid] = bs
 
-    # --- 新增：计算每个用户的平均准确率 ---
+    # Calculate the average accuracy for each user
     user_acc_dict = {nodeid: float(np.mean(hits)) for nodeid, hits in user_results.items()}
 
     # --- overall averages ---
@@ -71,10 +68,11 @@ def evaluate_model(pool, dataset, Y_heldout):
     mean_f1 = float(np.mean(list(all_f1.values())))
     mean_bs = float(np.mean(list(all_bs.values())))
     
-    # 将 user_acc_dict 加入返回值
+    # Add user_acc_dict to the return values
     return all_acc, all_ppl, mean_acc, mean_ppl, mean_f1, mean_bs, held_out_predict, user_acc_dict
 
-def evaluate_model_on_hard_groups(pool, dataset, Y_heldout, hard_groups_path='/home/ruomeng/gae_graph/dataset/opinionQA/hard_user_groups_West.json'):
+
+def evaluate_model_on_hard_groups(pool, dataset, Y_heldout, hard_groups_path='dataset/opinionqa/hard_user_groups_west.json'):
     """
     Evaluate model on hard user groups (top_50%, top_30%, top_10%, top_5%).
     More efficient: runs inference once, then filters results by group.
@@ -120,8 +118,6 @@ def evaluate_model_on_hard_groups(pool, dataset, Y_heldout, hard_groups_path='/h
     node_to_idx = {node: i for i, node in enumerate(all_group_nodes)}
     
     # Store predictions and gold labels for all questions
-    # Structure: predictions[qid] = (probs_array, node_indices_with_gold)
-    # gold_labels[qid][node_idx] = gold_label_idx
     predictions = {}
     gold_labels = {}
     
@@ -223,12 +219,12 @@ def evaluate_model_on_hard_groups(pool, dataset, Y_heldout, hard_groups_path='/h
             mean_acc = mean_ppl = mean_f1 = 0.0
         
         results[group_name] = {
-            'mean_acc': mean_acc,
-            'mean_ppl': mean_ppl,
-            'mean_f1': mean_f1
+            'mean_acc':round(mean_acc, 4),
+            'mean_ppl':round(mean_ppl, 4),
+            'mean_f1':round(mean_f1, 4)
         }
         
-        print(f"{group_name} Overall: Acc={mean_acc:.4f}, F1={mean_f1:.4f}, PPL={mean_ppl:.4f}")
+        print(f"{group_name} Overall: Acc={round(mean_acc, 4)}, F1={round(mean_f1, 4)}, PPL={round(mean_ppl, 4)}")
     
     return results
 

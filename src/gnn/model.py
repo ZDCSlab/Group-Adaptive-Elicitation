@@ -91,19 +91,19 @@ class RGCNEncoder(nn.Module):
         
         # 2. Iteratively apply RGCN layers
         for conv in self.layers:
-            # Convert to homogeneous format for RGCNConv compatibility
+            # convert to homogeneous format for RGCNConv compatibility
             x_all, edge_index, e_type, slices = self._to_homo(x_dict, edge_index_dict)
             
-            # Use the built-in RGCNConv forward pass (handles message passing & weights)
+            # use the built-in RGCNConv forward pass (handles message passing & weights)
             x_all = conv(x_all, edge_index, e_type)
             
             x_all = F.relu(x_all)
             x_all = self.dropout(x_all)
             
-            # Map back to dict for the next layer or final output
+            # map back to dict for the next layer or final output
             x_dict = self._from_homo(x_all, slices)
             
-        # 3. Final linear transformation per node type
+        # final linear transformation per node type
         return {nt: self.out_lin[nt](x) for nt, x in x_dict.items()}
 
 

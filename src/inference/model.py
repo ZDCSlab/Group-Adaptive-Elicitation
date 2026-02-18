@@ -1,15 +1,10 @@
-from collections import Counter
 import numpy as np
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
-from tqdm import tqdm
-from torch.nn.parallel import DistributedDataParallel as DDP
-import torch.distributed as dist
 import os
 import ray
-from typing import List, Any, Union, Optional
-import torch, random, numpy as np
-import ray
+from typing import List, Any, Union
+from peft import PeftModel, PeftConfig
 
 
 class PredictorPool:
@@ -64,6 +59,20 @@ class PredictorPool:
             return np.array(results)
         except:
             return results
+
+    def close(self):
+        """Gracefully shut down Ray actors and the Ray runtime."""
+        if hasattr(self, "actors"):
+            for actor in self.actors:
+                try:
+                    ray.kill(actor)
+                except Exception:
+                    pass
+            self.actors = []
+
+        if ray.is_initialized():
+            ray.shutdown()
+
         
 @ray.remote(num_gpus=1)
 class ModelWorker:
@@ -128,13 +137,6 @@ class ModelWorker:
 
 
 
-
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from peft import PeftModel, PeftConfig
-import torch
-import numpy as np
-import os
-
 class Meta_Model:
     def __init__(self, checkpoint, device, seed=42, batch_size=128):
         self.rng = np.random.default_rng(seed)
@@ -161,18 +163,13 @@ class Meta_Model:
             # A) Find the base model path from the adapter config
             peft_config = PeftConfig.from_pretrained(checkpoint)
             base_model_path = peft_config.base_model_name_or_path
-            
             # B) Load Base Model
             model = AutoModelForCausalLM.from_pretrained(
                 base_model_path, 
                 torch_dtype=torch.bfloat16, 
-                attn_implementation="flash_attention_2"
-            )
-            
-            
-            # C) Resize Base Model (CRITICAL: Do this BEFORE loading adapter to fix size mismatch)
+                attn_implementation="flash_attention_2")
+            # C) Resize Base Model
             model.resize_token_embeddings(len(self.tokenizer))
-            
             # D) Load Adapter
             model = PeftModel.from_pretrained(model, checkpoint)
             # E) Merge adapter
@@ -184,7 +181,7 @@ class Meta_Model:
             model = AutoModelForCausalLM.from_pretrained(
                 checkpoint, 
                 torch_dtype=torch.bfloat16, 
-                attn_implementation="sdpa",
+                attn_implementation="flash_attention_2",
                 ignore_mismatched_sizes=True # Safety net for full models
             )
             model.resize_token_embeddings(len(self.tokenizer))
@@ -239,13 +236,8 @@ class Meta_Model:
             option_token_ids = []
             for opt in options:
                 # Use add_special_tokens=False. 
-                # IMPORTANT: If your format is "<Answer>", the next token likely has NO leading space.
-                # If your format is "<Answer> ", the next token HAS a leading space.
-                # Adjust your options strings accordingly (e.g. " Yes" vs "Yes").
                 ids = self.tokenizer.encode(opt, add_special_tokens=False)
                 if len(ids) != 1:
-                    # Fallback for multi-token words (taking the first token usually makes sense for generation, 
-                    # but taking the last is better for suffixes. Context dependent.)
                     ids = [ids[-1]] 
                 option_token_ids.append(ids[0])
             
@@ -310,14 +302,14 @@ class Meta_Model:
         if not prompts:
             return np.array([])
 
-        # 1. Map all unique option strings to their token IDs
+        # Map all unique option strings to their token IDs
         unique_opts = sorted({opt for sublist in options_per_prompt for opt in sublist})
 
         opt_token_ids = []
         for o in unique_opts:
             ids = self.tokenizer.encode(o, add_special_tokens=False)
 
-            # --- HARD ASSERT 1: option must be single-token ---
+            # Option must be single-token
             assert len(ids) == 1, (
                 f"Option '{o}' is not single-token under this tokenizer. "
                 f"Got token ids: {ids}. "
@@ -326,7 +318,7 @@ class Meta_Model:
 
             opt_token_ids.append(ids[0])
 
-        # --- HARD ASSERT 2: no token collision ---
+        # No token collision
         assert len(set(opt_token_ids)) == len(opt_token_ids), (
             "Token collision detected: multiple options map to the same token id. "
             f"Options: {dict(zip(unique_opts, opt_token_ids))}"
@@ -335,21 +327,16 @@ class Meta_Model:
         token_tensor = torch.tensor(opt_token_ids, device=self.model.device)
         opt_to_union_idx = {opt: i for i, opt in enumerate(unique_opts)}
 
-
-
-        token_tensor = torch.tensor(opt_token_ids, device=self.model.device)
-        opt_to_union_idx = {opt: i for i, opt in enumerate(unique_opts)}
-
         all_results = []
         max_opts_global = max(len(o) for o in options_per_prompt)
 
-        # 2. Process Mega-Batch
+        # Process Mega-Batch
         for start in range(0, len(prompts), self.batch_size):
             b_prompts = prompts[start : start + self.batch_size]
             b_opts_list = options_per_prompt[start : start + self.batch_size]
             curr_bs = len(b_prompts)
 
-            # Standard LLM Tokenization
+            # LLM Tokenization
             inputs = self.tokenizer(
                 b_prompts, return_tensors="pt", padding=True, 
                 truncation=True, max_length=1024, add_special_tokens=True
@@ -358,15 +345,14 @@ class Meta_Model:
             with torch.no_grad():
                 outputs = self.model(**inputs)
                 attn = inputs["attention_mask"]
-                last_idx = attn.sum(dim=1) - 1  # [B]
+                last_idx = attn.sum(dim=1) - 1
                 last_token_logits = outputs.logits[torch.arange(outputs.logits.size(0)), last_idx, :].float()
 
-            
-            # 3. Narrow the search space to only our unique options
+            # Narrow the search space to only our unique options
             # Shape: [Batch, Len(unique_opts)]
             relevant_logits = torch.index_select(last_token_logits, dim=1, index=token_tensor)
             
-            # 4. Vectorized Indexing: Prepare a map for each prompt's specific options
+            # Vectorized Indexing: Prepare a map for each prompt's specific options
             max_opts_in_batch = max(len(o) for o in b_opts_list)
             indices_tensor = torch.zeros((curr_bs, max_opts_in_batch), dtype=torch.long, device=self.model.device)
             mask = torch.zeros((curr_bs, max_opts_in_batch), dtype=torch.bool, device=self.model.device)
@@ -376,22 +362,21 @@ class Meta_Model:
                 indices_tensor[i, :len(row_idx)] = torch.tensor(row_idx, device=self.model.device)
                 mask[i, :len(row_idx)] = True
 
-            # 5. The "Gather & Mask" Trick
+            # Gather & Mask: Pull the specific logits for each prompt into a dense matrix
             # Pull the specific logits for each prompt into a dense matrix
             gathered_logits = torch.gather(relevant_logits, 1, indices_tensor)
             
-            # Mask out padding positions with -infinity so they result in 0 probability
+            # Mask out padding positions with -infinity
             gathered_logits.masked_fill_(~mask, float('-inf'))
             
-            # Apply Softmax across the valid options only
+            # Softmax across the valid options only
             probs_tensor = torch.softmax(gathered_logits, dim=1)
             row_sums = probs_tensor.sum(dim=1)
             assert torch.allclose(
                 row_sums, torch.ones_like(row_sums), atol=1e-4
             ), "Softmax row sums not ~1; mask or option indexing is wrong."
-
             
-            # 6. Reconstruct the output matrix with global padding
+            # Reconstruct the output matrix with global padding
             batch_probs = np.zeros((curr_bs, max_opts_global))
             batch_probs[:, :max_opts_in_batch] = probs_tensor.cpu().numpy()
             
