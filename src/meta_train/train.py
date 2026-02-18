@@ -5,7 +5,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import wandb
 from peft import get_peft_model, LoraConfig
 from accelerate import Accelerator
-from transformers import set_seed  
+from accelerate.utils import set_seed  
 from tqdm import trange
 
 from .dataset import QTextDataset
@@ -269,7 +269,11 @@ def train_accelerate(args):
         # =========================
         # Evaluation (main process only)
         # =========================
-        if (iter_num % int(args.eval_interval) == 0) or (iter_num == iters - 1):
+        eval_interval = int(args.eval_interval)
+        do_eval = (iter_num == iters - 1) or (
+            eval_interval > 0 and (iter_num % eval_interval == 0)
+        )
+        if do_eval:
             accelerator.wait_for_everyone()
             if accelerator.is_main_process:
                 print(f"[iter {iter_num}] Evaluation")
@@ -284,6 +288,7 @@ def train_accelerate(args):
                         device=accelerator.device,
                         batch_size=args.batch_size,
                         tokenizer=tokenizer,
+                        debug=getattr(args, "debug", False),
                     )
                     val_loss, val_gen_acc, val_mc_acc = estimate_loss_and_acc_variable(
                         core_model,
@@ -292,6 +297,7 @@ def train_accelerate(args):
                         device=accelerator.device,
                         batch_size=args.batch_size,
                         tokenizer=tokenizer,
+                        debug=getattr(args, "debug", False),
                     )
                     test_loss, test_gen_acc, test_mc_acc = estimate_loss_and_acc_variable(
                         core_model,
@@ -300,6 +306,7 @@ def train_accelerate(args):
                         device=accelerator.device,
                         batch_size=args.batch_size,
                         tokenizer=tokenizer,
+                        debug=getattr(args, "debug", False),
                     )
 
                 print(f"[iter {iter_num}] train={train_loss:.4f} val={val_loss:.4f} test={test_loss:.4f}")

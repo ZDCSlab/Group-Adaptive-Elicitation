@@ -76,7 +76,7 @@ This project utilizes three primary datasets. To ensure the preprocessing script
 
 ### 1. Download Sources
 
-| Dataset | Focus | Source Link |
+| Dataset | Description | Source Link |
 | :--- | :--- | :--- |
 | **CES** | Cooperative Election Study | [Harvard Dataverse](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/CETPVT) |
 | **OpinionQA** | Pew Research Public Opinion (W50, W54, W92) | [Pew Research Center](https://www.pewresearch.org/american-trends-panel-datasets/) |
@@ -124,30 +124,41 @@ This script will:
 Requires a YAML config with `data`, `model`, `train`, `optim`, `split`, `logs`, `checkpoint` (see `scripts/args_gnn/config_{ces,opinionqa,twin}.yaml`). You can launch training via the provided shell script:
 
 ```bash
-sh scripts/gnn_train.sh
+sh scripts/run_gnn_train.sh
 ```
-Or run a specific dataset configuration manually. For example:
+Or run a specific dataset configuration manually:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python scripts/run_gnn_train.py --config scripts/args_gnn/config_ces.yaml
+CUDA_VISIBLE_DEVICES=0 python scripts/run_gnn_train.py --config scripts/args_gnn/config_{dataset}.yaml
 ```
+
+The trained model checkpoints will be saved under `checkpoints/gnn/`, while training logs will be written to `logs/gnn/`.
 
 ### 2. Meta-train the LLMs
 
-Uses Hugging Face `accelerate` and model/dataset args (see `scripts/run_meta_train.py` and `src/meta_train/args.py`).
+Meta-training is implemented using Hugging Face `accelerate`. Model and dataset arguments are defined in `src/meta_train/args.py`. You can launch training via the provided shell script:
 
 ```bash
-accelerate launch --config_file /path/to/accelerate_config.yaml \
-  scripts/run_meta_train.py \
-  --root_data_dir=/path/to/dataset \
-  --option_dict_path=/path/to/codebook.jsonl \
-  --dataset=opinionQA \
-  --model_name=Llama-3.1-8B \
-  --save_dir=/path/to/logs \
-  --wandb
+sh scripts/run_meta_train.sh
+```
+Or run a specific dataset configuration manually:
+
+```bash
+model_name='Llama-3.1-8B'
+dataset='ces'
+
+accelerate launch --config_file scripts/accelerate/default_config.yaml \
+    scripts/run_meta_train.py \
+    --root_data_dir="dataset"\
+    --dataset="$dataset" \
+    --option_dict_path="dataset/$dataset/codebook.jsonl"\
+    --model_name="$model_name"\
+    --save_dir="checkpoints/meta_train" \
+    --wandb
 ```
 
-Adjust paths and `model_name` to your setup; `run_meta_train.py` loads `scripts/model_args/{model_name}.yaml` if present.
+- Configure model-specific arguments in `scripts/model_args/{model_name}.yaml`.
+- The `--wandb` flag enables experiment tracking via Weights & Biases.
 
 ### 3. Run inference
 

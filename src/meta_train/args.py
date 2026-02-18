@@ -11,19 +11,14 @@ def parse_arguments():
     parser.add_argument(
         "--option_dict_path",
         type=str,
-        default='data',
-        help="data directory",
+        default='codebook.jsonl',
+        help="codebook file path",
     )  
-    parser.add_argument(
-        "--identity",
-        type=str,
-        default='identity',
-        help="identity directory",
-    )
+  
     parser.add_argument(
         "--dataset",
         type=str,
-        choices=["ces", "opinionQA", "twin"],
+        choices=["ces", "opinionqa", "twin"],
         default='ces',
         help="dataset name",
     )

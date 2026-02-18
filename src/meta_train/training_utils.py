@@ -104,7 +104,7 @@ def get_loss_variable_candidates(model, X, Y, gradient_mask, attention_mask, bat
 # --- Estimate loss and accuracy ---
 @torch.no_grad()
 def estimate_loss_and_acc_variable(
-    model, dataset, split, device, batch_size, tokenizer, eval_iters=100
+    model, dataset, split, device, batch_size, tokenizer, eval_iters=100, debug=False
 ):
     model.eval()
     losses = []
@@ -248,52 +248,6 @@ def get_cosine_schedule_with_min_lr(
         return min_lr_ratio + (1.0 - min_lr_ratio) * cosine
 
     return LambdaLR(optimizer, lr_lambda, last_epoch)
-
-
-def debug_lr_schedule(optimizer, scheduler, total_steps, warmup_steps, base_lr, min_lr_ratio):
-    # We'll step from 0 to total_steps+5 to see if it rebounds when over-stepping.
-    lrs = []
-    # record initial lr
-    lrs.append(optimizer.param_groups[0]["lr"])
-
-    for _ in range(total_steps + 5):
-        scheduler.step()
-        lrs.append(optimizer.param_groups[0]["lr"])
-
-    print(f"[LR DEBUG] base_lr={base_lr:.3e}  min_lr={base_lr*min_lr_ratio:.3e}  "
-          f"total_steps={total_steps}  warmup_steps={warmup_steps}")
-    print("[LR DEBUG] first 20:", [f"{x:.3e}" for x in lrs[:20]])
-    mid = min(len(lrs)-1, warmup_steps + 1)
-    print(f"[LR DEBUG] around warmup end (steps {max(0, mid-5)}..{mid+5}):",
-          [f"{lrs[i]:.3e}" for i in range(max(0, mid-5), min(len(lrs), mid+6))])
-    print("[LR DEBUG] last 20:", [f"{x:.3e}" for x in lrs[-20:]])
-
-    # --- Assertions ---
-    # 1) warmup monotonic non-decreasing
-    if warmup_steps >= 2:
-        ok_warmup = all(lrs[i] <= lrs[i+1] + 1e-12 for i in range(0, warmup_steps-1))
-        print("[LR DEBUG] warmup monotonic ↑ :", ok_warmup)
-
-    # 2) after warmup monotonic non-increasing until total_steps
-    start = warmup_steps
-    end = total_steps
-    if end - start >= 2:
-        ok_decay = all(lrs[i] >= lrs[i+1] - 1e-12 for i in range(start, end-1))
-        print("[LR DEBUG] decay monotonic ↓  :", ok_decay)
-
-    # 3) end lr close to min_lr
-    target_min = base_lr * min_lr_ratio
-    print("[LR DEBUG] lr@total_steps:", f"{lrs[min(total_steps, len(lrs)-1)]:.3e}",
-          "target_min:", f"{target_min:.3e}")
-
-    # 4) check rebound within [0, total_steps]
-    if end - start >= 3:
-        # detect any local increase during decay
-        rebound = any(lrs[i+1] > lrs[i] + 1e-12 for i in range(start, end-1))
-        print("[LR DEBUG] rebound within training window:", rebound)
-
-
-
 
 
 def get_lr(it, warmup_iters = 2000, lr_decay_iters = 600000, min_lr = 6e-5, learning_rate = 6e-4):
