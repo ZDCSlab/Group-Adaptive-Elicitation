@@ -3,7 +3,7 @@
 ![Teaser](/assets/gae_teaser.jpg "Teaser")
 
 
-This repository contains code for the paper: [Whom to Query for What: Adaptive Group Elicitation via Multi-Turn LLM Interactions](https://arxiv.org/pdf/2602.14279).
+This repository contains code for the paper [Whom to Query for What: Adaptive Group Elicitation via Multi-Turn LLM Interactions](https://arxiv.org/pdf/2602.14279) by Ruomeng Ding*, Tianwei Gao*, Thomas P. Zollo, Eitan Bachmat, Richard Zemel, and Zhun Deng.
 
 We study adaptive group elicitation, a framework that jointly selects which questions to ask and which respondents to query under limited budgets. Our approach combines an LLM-based expected information gain objective with heterogeneous graph neural network propagation to impute missing responses and guide respondent selection.
 
