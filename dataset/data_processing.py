@@ -6,7 +6,7 @@ import argparse
 import yaml
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
-from utils import load_jsonl_as_dict_of_dict, sample_and_shuffle
+from utils import load_jsonl_as_dict, sample_and_shuffle
 
 
 def build_data_for_meta_training(sample_id: int) -> dict:
@@ -82,6 +82,10 @@ if __name__ == "__main__":
         multiplier = split_config[split]["multiplier"]
 
         questions_base_path = f'{cfg["dataset"]["name"]}/data/question_{region}_{suffix}.csv'
+        # create questions_base_path if it does not exist
+        if not os.path.exists(questions_base_path):
+            os.makedirs(os.path.dirname(questions_base_path), exist_ok=True)
+
         survey_data = pd.read_csv(questions_base_path)
         num_records = len(survey_data)
         num_samples = num_records * multiplier
@@ -92,7 +96,7 @@ if __name__ == "__main__":
         else:
             raise ValueError(f"'caseid' column not found in {questions_base_path}")
 
-        codebook = load_jsonl_as_dict_of_dict(cfg["dataset"]["codebook_path"])
+        codebook = load_jsonl_as_dict(cfg["dataset"]["codebook_path"])
 
         GLOBAL_SEED = cfg["splits"]["seed"]
         save_path = f'{cfg["dataset"]["name"]}/processed_data/{split}.jsonl'

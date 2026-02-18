@@ -2,7 +2,7 @@ import pandas as pd
 import json
 import numpy as np
 from pathlib import Path
-from utils import load_jsonl_as_dict_of_dict
+from utils import load_jsonl_as_dict
 import yaml
 import os
 import argparse
@@ -78,19 +78,20 @@ if __name__ == "__main__":
 
     out_json = cfg["dataset"]["user_split_path"]
     survey_data = pd.read_csv(cfg["dataset"]["all_responses_path"])
-    codebook = load_jsonl_as_dict_of_dict(cfg["dataset"]["codebook_path"])
+    codebook = load_jsonl_as_dict(cfg["dataset"]["codebook_path"])
 
     REGION_NAME_TO_CODE = {v: k for k, v in REGION_DICT.items()}
     target_region_codes = [REGION_NAME_TO_CODE[IN_DIST_REGION], REGION_NAME_TO_CODE[OOD_REGION]]
 
-    base_path = f'{cfg["dataset"]["name"]}/data'
+    base_path = f'{cfg["dataset"]["name"]}/data/'
     # create base_path if it does not exist
     if not os.path.exists(base_path):
-        os.makedirs(base_path)
+        os.makedirs(base_path, exist_ok=True)
 
     # Split the data by region: 
     for split_val in REGION_NAME_TO_CODE[IN_DIST_REGION]:
         split_df = survey_data[survey_data[REGION_COL]==split_val]
+        print(f"Number of responses in {REGION_DICT[split_val]}: {len(split_df)}")
         train_df, val_df, (train_ids, val_ids) = split_by_caseid(split_df, test_size=cfg["splits"]["val_size"], seed=cfg["splits"]["seed"], id_col=IDENTITY_COL)
         train_df[IDENTITY_COL+DEMOGRAPHIC_COLS].to_csv(f'{base_path}/demo_{REGION_DICT[split_val]}_train.csv', index=None)
         train_df[IDENTITY_COL+QUESTION_COLS].to_csv(f'{base_path}/question_{REGION_DICT[split_val]}_train.csv', index=None)
@@ -100,6 +101,7 @@ if __name__ == "__main__":
     # Split the data by region
     for split_val in REGION_NAME_TO_CODE[OOD_REGION]:
         test_df = survey_data[survey_data[REGION_COL]==split_val]
+        print(f"Number of responses in {REGION_DICT[split_val]}: {len(test_df)}")
         test_df[IDENTITY_COL+DEMOGRAPHIC_COLS].to_csv(f'{base_path}/demo_{REGION_DICT[split_val]}_test.csv', index=None)
         test_df[IDENTITY_COL+QUESTION_COLS].to_csv(f'{base_path}/question_{REGION_DICT[split_val]}_test.csv', index=None)
 

@@ -4,6 +4,7 @@
 
 
 *.dta
+*.sav
 *.log
 *.tmp
 *.ipynb_checkpoints/

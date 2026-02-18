@@ -86,9 +86,36 @@ This project utilizes three primary datasets. To ensure the preprocessing script
 
 ### 2. Setup Instructions
 
-1. Place the files under: `dataset/{ces,opinionqa,twin}/raw_data`.
-2. 
- 
+#### 2.1 Place the raw dataset files under: `dataset/{ces,opinionqa,twin}/raw_data`:
+```
+Group-Adaptive-Elicitation/
+└── dataset/
+    ├── ces/
+    │   └── raw_data/
+    │       └── merged_recontact_2024.dta
+    │
+    ├── opinionqa/
+    │   └── raw_data/
+    │       ├── ATP W50.sav
+    │       ├── ATP W54.sav
+    │       └── ATP W92.sav
+    │
+    └── twin/
+        └── raw_data/
+            └── Twin-2K-500
+```
+#### 2.2 Run the following command to preprocess all datasets and generate the processed features:
+```
+sh dataset/dataset.sh
+```
+
+This script will:
+- Preprocess the CES, OpinionQA, and Twin-2K datasets
+- Generate cleaned feature matrices
+- Construct train/validation/test user splits
+- Save data features under `dataset/{ces,opinionqa,twin}/data/`
+- Prepare meta-training sequences under `dataset/{ces,opinionqa,twin}/processed_data/`
+
 
 ## Usage
 
@@ -153,5 +180,13 @@ Use `--imputation` and `--impute_thres` for LLM-based imputation. Query selectio
 
 ## Cite Our Work
 ```
-TBD
+@misc{ding2026querywhatadaptivegroup,
+      title={Whom to Query for What: Adaptive Group Elicitation via Multi-Turn LLM Interactions}, 
+      author={Ruomeng Ding and Tianwei Gao and Thomas P. Zollo and Eitan Bachmat and Richard Zemel and Zhun Deng},
+      year={2026},
+      eprint={2602.14279},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2602.14279}, 
+}
 ```
