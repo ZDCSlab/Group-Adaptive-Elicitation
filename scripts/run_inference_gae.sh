@@ -11,7 +11,7 @@ runs_id=0 # runs id (we sampled 10 different runs for each setting to get the av
 node_selection_prec=0.5 # fraction of nodes to select for node selection
 ########################################################
 region=West # region 
-checkpoint=checkpoints/meta_train/${dataset}/${model_name}/20251120_163157 # path to the checkpoint
+checkpoint=checkpoints/meta_train/${dataset}/${model_name}/your_checkpoint_path # path to the checkpoint
 runs=scripts/runs/${dataset}.csv # path to the runs file
 ########################################################
 llm_batch_size=128 # batch size for LLM inference
