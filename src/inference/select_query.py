@@ -12,7 +12,7 @@ Label = Union[int, float]
 
 
 def masked_entropy(probs, mask, eps=1e-12):
-    # Aligns with: -torch.sum(probs * torch.log(probs), dim=-1)
+    # -torch.sum(probs * torch.log(probs), dim=-1)
     p = probs * mask[None, :, :]
     p /= (p.sum(axis=-1, keepdims=True) + eps)
     log_p = np.zeros_like(p)
@@ -65,7 +65,7 @@ def select_queries(dataset, pool, nodes, Xavail, observed, cur_asked_queries, ve
     assert probs_cands.shape[:2] == (len(nodes), len(query_cand_list))
 
     # -----------------------------------------------------------
-    # 4. EIG Loop (Equivalent to the nested loops in ref code)
+    # 4. EIG Loop 
     # -----------------------------------------------------------
     EIG = {}
     pbar = tqdm(enumerate(query_cand_list), total=len(query_cand_list), 
